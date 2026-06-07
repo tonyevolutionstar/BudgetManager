@@ -1,0 +1,7 @@
+streamlit>=1.58.0
+streamlit-echarts>=0.6.1
+pyecharts>=2.1.0
+pdfplumber
+pandas
+openpyxl
+supabase
