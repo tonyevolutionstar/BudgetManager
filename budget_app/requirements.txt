@@ -4,4 +4,3 @@ pyecharts>=2.1.0
 pdfplumber
 pandas
 openpyxl
-supabase

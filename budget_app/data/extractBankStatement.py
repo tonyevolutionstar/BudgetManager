@@ -447,7 +447,7 @@ class ExtratorExtratosBancarios:
             for transacao in resultado['transacoes'][-10:]:
                 tipo = "💸 Débito" if transacao['debito'] > 0 else "💰 Crédito"
                 valor = transacao['debito'] if transacao['debito'] > 0 else transacao['credito']
-                confianca = "✓" if transacao['confianca_categoria'] > 0.7 else "?")
+                confianca = "✓" if transacao['confianca_categoria'] > 0.7 else "?"
                 
                 print(f"{transacao['data']} | {tipo}: €{valor:.2f} | "
                       f"[{transacao['categoria']}] {confianca}")
