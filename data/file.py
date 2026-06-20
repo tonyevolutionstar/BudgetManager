@@ -1,12 +1,22 @@
 import pandas as pd
 import tempfile, os
 import streamlit as st
-from bankStatementExtractor import BankStatementExtractor
+from data.bankStatementExtractor import BankStatementExtractor
 
 CSV_COLUMNS = ["Date", "Date_Value", "Description", "Expense", "Income", "Accounting Balance", "Balance", "Category"]
 SUPPORTED_TYPES = ["csv", "pdf"]
 
-def handle_upload_file(uploaded_file) -> pd.DataFrame:
+def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.DataFrame:
+    mime = uploaded_file.type
+    if mime.endswith(SUPPORTED_TYPES[0]):
+        st.session_state.df = load_csv_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
+        st.session_state.model = None
+    elif mime.endswith(SUPPORTED_TYPES[1]):
+        st.session_state.df = load_pdf_file(uploaded_file)
+    
+    return st.session_state.df
+
+def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.DataFrame:
     mime = uploaded_file.type
     if mime.endswith(SUPPORTED_TYPES[0]):
         st.session_state.df = load_csv_file(uploaded_file)
@@ -49,46 +59,73 @@ def load_pdf_file(file) -> pd.DataFrame:
         os.unlink(tmp_path)
     return pdf_df
 
-def load_csv_file(file): 
+def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
     """
-    Load transactions from a CSV source.
-    Accepts either a file path string (disk) or a Streamlit UploadedFile object.
-    Returns a normalized DataFrame or an empty one if the source is missing/empty.
+    Load transactions from a CSV source with configurable skip and header rows.
+    
+    Args:
+        file: File path or Streamlit UploadedFile
+        skip_rows: Number of rows to skip from the top (default: 6)
+        header_row: Row index to use as header (0-indexed, default: 6)
     """
     try:
-        # File path string: check existence before reading
+        # File path string
         if isinstance(file, (str, os.PathLike)):
             if not os.path.exists(file):
                 return pd.DataFrame(columns=CSV_COLUMNS)
-            df = pd.read_csv(file, sep=";", header=0, parse_dates=[0, 1],
-                             date_format="%d/%m/%Y", na_values="null")
+            
+            df = pd.DataFrame()
+            
+            # Skip rows before header
+            if skip_rows > 0:
+                df = pd.read_csv(
+                    file, 
+                    sep=";", 
+                    skiprows=range(skip_rows),
+                    header=0,  # First row after skip becomes header
+                    parse_dates=[0, 1],
+                    date_format="%d/%m/%Y",
+                    na_values="null"
+                )
+            else:
+                # Use specified header row
+                df = pd.read_csv(
+                    file, 
+                    sep=";", 
+                    header=header_row,
+                    parse_dates=[0, 1],
+                    date_format="%d/%m/%Y",
+                    na_values="null"
+                )
         else:
-            # Streamlit UploadedFile object: read directly
-            df = pd.read_csv(file, sep=";", header=0, parse_dates=[0, 1],
-                             date_format="%d/%m/%Y", na_values="null")
+            # Streamlit UploadedFile object
+            df = pd.read_csv(
+                file, 
+                sep=";", 
+                skiprows=range(skip_rows) if skip_rows > 0 else None,
+                header=0 if skip_rows > 0 else header_row,
+                parse_dates=[0, 1],
+                date_format="%d/%m/%Y",
+                na_values="null"
+            )
+        
         return normalize_dataframe(df)
-    except Exception:
+    except Exception as e:
+        st.error(f"Error loading CSV: {e}")
         return pd.DataFrame(columns=CSV_COLUMNS)
 
 def normalize_dataframe(df: pd.DataFrame):
-    """Ensure correct dtypes and fill missing values."""
-    # Ensure all required columns exist
-    for col in CSV_COLUMNS:
-        if col not in df.columns:
-            df[col] = 0.0 if col != "Description" else ""
+    """Normalize DataFrame with better error handling."""
+    df = df.copy()
     
-    # Date columns
+    # Use more robust date parsing
     for col in ["Date", "Date_Value"]:
-        df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
     
-    # Numeric columns
+    # Use nullable types for numeric columns
     for col in ["Expense", "Income", "Accounting Balance", "Balance"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce", downcast=float).fillna(0.0)
-    
-    # Fill missing descriptions
-    df["Description"] = df["Description"].fillna("")
- 
-    # Fill missing category
-    df["Category"] = df["Category"].fillna("Others")
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Float64")
     
     return df

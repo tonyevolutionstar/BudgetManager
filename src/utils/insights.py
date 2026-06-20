@@ -31,11 +31,29 @@ def check_alerts(df: pd.DataFrame) -> int:
  
     return alerts_count
 
+@st.cache_data
 def get_spending_by_category(df: pd.DataFrame) -> pd.DataFrame:
     """Return a DataFrame with total expenses grouped by category."""
     return df.groupby("Category")["Expense"].sum().reset_index()
  
- 
+@st.cache_data
 def get_daily_income_expenses(df: pd.DataFrame) -> pd.DataFrame:
     """Return a DataFrame with daily sums of Expense and Income."""
     return df.groupby("Date").agg({"Expense": "sum", "Income": "sum"}).reset_index()
+
+@st.cache_data
+def get_monthly_trends(df: pd.DataFrame) -> pd.DataFrame:
+    """Get monthly spending trends."""
+    df["Month"] = df["Date"].dt.to_period("M")
+    return df.groupby("Month").agg({
+        "Expense": "sum",
+        "Income": "sum"
+    }).reset_index()
+
+@st.cache_data
+def get_anomalies(df: pd.DataFrame) -> pd.DataFrame:
+    """Detect unusual transactions using IQR."""
+    Q1 = df["Expense"].quantile(0.25)
+    Q3 = df["Expense"].quantile(0.75)
+    IQR = Q3 - Q1
+    return df[(df["Expense"] > Q3 + 1.5 * IQR) | (df["Expense"] < Q1 - 1.5 * IQR)]

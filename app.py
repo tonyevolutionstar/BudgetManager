@@ -10,6 +10,22 @@ from data import model as ctgAI
 from src.utils import insights
 from src.utils import date as dt
 
+# Current: Unclear state initialization
+# Better: Use proper state initialization
+def init_session_state():
+    defaults = {
+        "df": pd.DataFrame(),
+        "model": None,
+        "categories_initialized": False,
+        "page": "dashboard"
+    }
+    for key, default in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+# Call at app start
+init_session_state()
+
 # Page config must be the very first Streamlit call
 st.set_page_config(
     page_title="Budget Manager", 
@@ -18,16 +34,27 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-uploaded_file = st.file_uploader(
-    label="Upload a bank statement (CSV or PDF)",
-    type=file.SUPPORTED_TYPES,
-    accept_multiple_files=False
-)
-
 df = DataFrame()
 
-if uploaded_file is not None:
-    df = file.handle_upload_file(uploaded_file)
+
+# Na UI, permite ao utilizador configurar
+with st.expander("⚙️ CSV Import Settings"):
+    col1, col2 = st.columns(2)
+    with col1:
+        skip_rows = st.number_input("Rows to skip", min_value=0, max_value=20, value=6)
+    with col2:
+        header_row = st.number_input("Header row (0-indexed)", min_value=0, max_value=20, value=6)
+    
+    if st.button("Apply settings"):
+        uploaded_file = st.file_uploader(
+            label="Upload a bank statement (CSV or PDF)",
+            type=file.SUPPORTED_TYPES,
+            accept_multiple_files=False
+        )
+
+        if uploaded_file is not None:
+            df = file.handle_upload_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
+            st.success(f"CSV loaded with skip_rows={skip_rows} and header_row={header_row}")
 
 # Train model lazily (only when needed and not yet trained)
 if st.session_state.model is None and not df.empty:
@@ -37,8 +64,8 @@ if st.session_state.model is None and not df.empty:
 model = st.session_state.model
 today: date = dt.get_today()
 
-df, filter_type = dt.date_filter(df)
-dt.apply_date_filter(df, filter_type=,)
+df, filter_type, start_date, end_date = dt.date_filter(df)
+dt.apply_date_filter(df, filter_type, start_date,end_date)
 
 # -------------------------------
 # Main Dashboard
@@ -109,12 +136,3 @@ else:
 st.header("📜 Transaction History")
 st.dataframe(df, use_container_width=True)
 
-# Clear data button (with confirmation)
-if st.button("🗑️ Clear All Transactions", type="primary"):
-    # Optional: add confirmation dialog
-    empty_df = pd.DataFrame(columns=file.CSV_COLUMNS)
-    st.session_state.df = empty_df
-    file.save_dataframe(empty_df)
-    st.cache_resource.clear()
-    st.success("All transactions cleared. Reloading...")
-    st.rerun()
