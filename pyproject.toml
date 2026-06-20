@@ -5,8 +5,10 @@ requires-python = ">=3.14"
 dependencies = [
     "openpyxl>=3.1.5",
     "pandas>=3.0.3",
-    "pdfplumber>=0.11.9",
     "pyecharts>=2.1.0",
     "streamlit>=1.58.0",
     "streamlit-echarts>=0.6.1",
+    "plotly>=6.8.0",
+    "pdfplumber>=0.11.9",
+    "scikit-learn>=1.9.0"
 ]

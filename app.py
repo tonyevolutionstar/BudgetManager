@@ -1,87 +1,44 @@
+from pandas import DataFrame
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+from datetime import date
 
 from data import categories as ctg
 from data import file
 from data import model as ctgAI
 from src.utils import insights
-from src.utils import date
+from src.utils import date as dt
 
-# Page config must be first Streamlit command
-st.set_page_config(page_title="Budget Manager", page_icon=":material/finance:", layout="wide", initial_sidebar_state="auto")
-
-fileTypes = ["csv", "pdf"]
-
-uploaded_file = st.file_uploader(label="Choose File", type=fileTypes, accept_multiple_files=False)
-if uploaded_file is not None:
-    attribute = uploaded_file.__getattribute__("type")
-    if attribute.endswith(fileTypes[0]):
-        if "df" not in st.session_state:
-            st.session_state.df = file.load_csv_file(uploaded_file)
-            st.write(st.session_state.df.columns)
-    elif attribute.endswith(fileTypes[1]):
-        reader = PdfReader(uploaded_file)
-        st.write(reader.read(uploaded_file.getbuffer()))
-
-df = st.session_state.df
-
-# Train/load model
-model, _ = ctgAI.get_trained_model(df)
-today = date.get_actual_date()
-
-# -------------------------------
-# Helper: apply date filter
-# -------------------------------
-def apply_date_filter(df, filter_type, start_date=None, end_date=None):
-    """Return filtered DataFrame based on selected filter type."""
-    if df.empty or "Date" not in df.columns:
-        return df.copy()
-    
-    df_copy = df.copy()
-    # Ensure Date is datetime
-    df_copy["Date"] = pd.to_datetime(df_copy["Date"])
-    
-    if filter_type == "Today":
-        filtered = df_copy[df_copy["Date"].dt.date == today]
-    elif filter_type == "This Month":
-        filtered = df_copy[(df_copy["Date"].dt.year == today.year) & 
-                           (df_copy["Date"].dt.month == today.month)]
-    else:  # Custom
-        if start_date and end_date:
-            filtered = df_copy[(df_copy["Date"].dt.date >= start_date) & 
-                               (df_copy["Date"].dt.date <= end_date)]
-        else:
-            filtered = df_copy
-    return filtered
-
-# -------------------------------
-# Sidebar: Date Filter
-# -------------------------------
-st.sidebar.header("📅 Date Filter")
-filter_type = st.sidebar.radio(
-    "Select period",
-    ["Today", "This Month", "Custom Range"],
-    index=1  # default to "This Month"
+# Page config must be the very first Streamlit call
+st.set_page_config(
+    page_title="Budget Manager", 
+    page_icon=":material/finance:",
+    layout="wide",
+    initial_sidebar_state="auto"
 )
 
-start_date = None
-end_date = None
-if filter_type == "Custom Range":
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        start_date = st.date_input("From", max_value=today, format="DD/MM/YYYY")
-    with col2:
-        end_date = st.date_input("To", max_value=today, format="DD/MM/YYYY")
+uploaded_file = st.file_uploader(
+    label="Upload a bank statement (CSV or PDF)",
+    type=file.SUPPORTED_TYPES,
+    accept_multiple_files=False
+)
 
-# Apply filter to main DataFrame
-filtered_df = apply_date_filter(df, filter_type, start_date, end_date)
+df = DataFrame()
 
-# Display current filter info in sidebar
-if filter_type == "Today":
-    st.sidebar.info(f"Showing data for **{today.strftime("%d of %B")}**")
-elif filter_type == "This Month":
-    st.sidebar.info(f"Showing data for **{today.strftime("%B")}**")
+if uploaded_file is not None:
+    df = file.handle_upload_file(uploaded_file)
 
+# Train model lazily (only when needed and not yet trained)
+if st.session_state.model is None and not df.empty:
+    model, _ = ctgAI.get_trained_model(df)
+    st.session_state.model = model
+
+model = st.session_state.model
+today: date = dt.get_today()
+
+df, filter_type = dt.date_filter(df)
+dt.apply_date_filter(df, filter_type=,)
 
 # -------------------------------
 # Main Dashboard
@@ -102,8 +59,6 @@ col1, col2 = st.columns(2)
 col1.metric(label="Total Income", value=df['Income'].sum(), format="euro", delta="Gains", delta_color="normal")
 col2.metric(label="Total Expense", value=df['Expense'].sum(), format="euro", delta="Losses", delta_arrow="down", delta_color="inverse")
 
-# Alerts
-st.header("⚠️ Financial Health Alerts")
 insights.check_alerts(df)
 
 # Charts
