@@ -1,10 +1,11 @@
 import streamlit as st
+import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import make_pipeline
 
 @st.cache_resource
-def get_trained_model(df):
+def get_trained_model(df: pd.DataFrame):
     """Train and return model + DataFrame, or (None, None) if no data."""
     if df is None or df.empty or "Description" not in df.columns or "Category" not in df.columns:
         return None, df

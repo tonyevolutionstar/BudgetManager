@@ -45,17 +45,16 @@ def initialize_categories():
         "Utilities": "purple", "Entertainment": "red", "Healthcare": "pink",
         "Insurance": "cyan", "Personal": "magenta", "Debt": "brown",
         "Savings": "teal", "Gifts": "yellow", "Education": "gray",
-        "Income": "black", "Others": "lightgray"
+        "Income": "black", "Subscriptions": "indigo", "Others": "lightgray"
     }
-    
+ 
     st.session_state.category_icons = {
         "Housing": "🏠", "Transportation": "🚗", "Food": "🍔",
         "Utilities": "💡", "Entertainment": "🎉", "Healthcare": "💊",
         "Insurance": "🛡️", "Personal": "👤", "Debt": "💳",
         "Savings": "💰", "Gifts": "🎁", "Education": "📚",
-        "Income": "💼", "Others": "❓"
+        "Income": "💼", "Subscriptions": "📱", "Others": "❓"
     }
-    
     st.session_state.categories_initialized = True
 
 # -------------------------------
