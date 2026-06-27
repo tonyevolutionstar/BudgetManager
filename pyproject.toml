@@ -3,12 +3,18 @@ name = "budget-app"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "openpyxl>=3.1.5",
-    "pandas>=3.0.3",
-    "pyecharts>=2.1.0",
-    "streamlit>=1.58.0",
-    "streamlit-echarts>=0.6.1",
-    "plotly>=6.8.0",
-    "pdfplumber>=0.11.9",
-    "scikit-learn>=1.9.0"
+    "openpyxl==3.1.5",
+    "pandas==3.0.3",
+    "pyecharts==2.1.0",
+    "streamlit==1.58.0",
+    "streamlit-echarts==0.6.1",
+    "plotly==6.8.0",
+    "pdfplumber==0.11.9",
+    "scikit-learn==1.9.0",
+    "psycopg2-binary==2.9.12",
+    "sqlalchemy==2.0.51",
+    "asyncio==4.0.0",
+    "dotenv==0.9.9",
+    "python-dotenv==1.2.2"
 ]
+DATABASE_URL='postgresql://neondb_owner:npg_uMVTgPlW12Qr@ep-withered-smoke-asbxahwj-pooler.c-4.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'

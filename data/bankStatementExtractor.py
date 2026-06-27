@@ -2,10 +2,8 @@ import pdfplumber
 import pandas as pd
 import re
 import json
-import os
 from datetime import datetime
 from typing import Any
-from collections import Counter
 
 class BankStatementExtractor:
     """

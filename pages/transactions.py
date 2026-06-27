@@ -46,7 +46,6 @@ with st.sidebar.form("transaction_form", clear_on_submit=True, enter_to_submit=F
         min_value=0.0,
         step=0.5,
         format="%.2f",
-        icon=":material/euro_symbol:",
     )
 
     # Suggest category from description using the ML model

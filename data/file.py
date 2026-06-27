@@ -16,16 +16,6 @@ def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.Dat
     
     return st.session_state.df
 
-def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.DataFrame:
-    mime = uploaded_file.type
-    if mime.endswith(SUPPORTED_TYPES[0]):
-        st.session_state.df = load_csv_file(uploaded_file)
-        st.session_state.model = None
-        st.write(st.session_state.df.columns)
-    elif mime.endswith(SUPPORTED_TYPES[1]):
-        st.session_state.df = load_pdf_file(uploaded_file)
-    return st.session_state.df
-
 def load_pdf_file(file) -> pd.DataFrame:
     extractor = BankStatementExtractor()
     pdf_df = pd.DataFrame()
@@ -47,10 +37,10 @@ def load_pdf_file(file) -> pd.DataFrame:
             })
             pdf_df["Date_Value"] = pdf_df["Date"]
             pdf_df["Accounting Balance"] = pdf_df["Income"] - pdf_df["Expense"]
-            for col in file.CSV_COLUMNS:
+            for col in CSV_COLUMNS:
                 if col not in pdf_df.columns:
                     pdf_df[col] = 0.0
-            st.session_state.df = file.normalize_dataframe(pdf_df[file.CSV_COLUMNS])
+            st.session_state.df = normalize_dataframe(pdf_df[CSV_COLUMNS])
             st.session_state.model = None
             st.success(f"PDF imported: {result['total_transactions']} transactions found.")
         else:
@@ -114,6 +104,7 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
         st.error(f"Error loading CSV: {e}")
         return pd.DataFrame(columns=CSV_COLUMNS)
 
+
 def normalize_dataframe(df: pd.DataFrame):
     """Normalize DataFrame with better error handling."""
     df = df.copy()
@@ -129,3 +120,6 @@ def normalize_dataframe(df: pd.DataFrame):
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Float64")
     
     return df
+
+def save_dataframe(df: pd.DataFrame, path: str = "data/csv/transactions.csv"):
+    df.to_csv(path, sep=";", index=False, encoding="utf-8-sig")

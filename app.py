@@ -1,4 +1,3 @@
-from pandas import DataFrame
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -10,13 +9,20 @@ from data import model as ctgAI
 from src.utils import insights
 from src.utils import date as dt
 
+# Page config must be the very first Streamlit call
+st.set_page_config(
+    page_title="Budget Manager", 
+    page_icon=":material/finance:",
+    layout="wide",
+    initial_sidebar_state="auto"
+)
+
 # Current: Unclear state initialization
 # Better: Use proper state initialization
 def init_session_state():
     defaults = {
         "df": pd.DataFrame(),
         "model": None,
-        "categories_initialized": False,
         "page": "dashboard"
     }
     for key, default in defaults.items():
@@ -26,18 +32,8 @@ def init_session_state():
 # Call at app start
 init_session_state()
 
-# Page config must be the very first Streamlit call
-st.set_page_config(
-    page_title="Budget Manager", 
-    page_icon=":material/finance:",
-    layout="wide",
-    initial_sidebar_state="auto"
-)
+df = st.session_state.df
 
-df = DataFrame()
-
-
-# Na UI, permite ao utilizador configurar
 with st.expander("⚙️ CSV Import Settings"):
     col1, col2 = st.columns(2)
     with col1:
@@ -45,16 +41,15 @@ with st.expander("⚙️ CSV Import Settings"):
     with col2:
         header_row = st.number_input("Header row (0-indexed)", min_value=0, max_value=20, value=6)
     
-    if st.button("Apply settings"):
-        uploaded_file = st.file_uploader(
-            label="Upload a bank statement (CSV or PDF)",
-            type=file.SUPPORTED_TYPES,
-            accept_multiple_files=False
-        )
-
-        if uploaded_file is not None:
-            df = file.handle_upload_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
-            st.success(f"CSV loaded with skip_rows={skip_rows} and header_row={header_row}")
+    uploaded_file = st.file_uploader(
+        label="Upload a bank statement (CSV or PDF)",
+        type=file.SUPPORTED_TYPES,
+        accept_multiple_files=False
+    )
+    
+    if st.button("Apply settings") and uploaded_file:
+        df = file.handle_upload_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
+        st.success(f"CSV loaded with skip_rows={skip_rows} and header_row={header_row}")
 
 # Train model lazily (only when needed and not yet trained)
 if st.session_state.model is None and not df.empty:
@@ -65,7 +60,6 @@ model = st.session_state.model
 today: date = dt.get_today()
 
 df, filter_type, start_date, end_date = dt.date_filter(df)
-dt.apply_date_filter(df, filter_type, start_date,end_date)
 
 # -------------------------------
 # Main Dashboard
@@ -83,8 +77,13 @@ df["Balance"] = df["Accounting Balance"].cumsum()
 
 # Metrics row
 col1, col2 = st.columns(2)
-col1.metric(label="Total Income", value=df['Income'].sum(), format="euro", delta="Gains", delta_color="normal")
-col2.metric(label="Total Expense", value=df['Expense'].sum(), format="euro", delta="Losses", delta_arrow="down", delta_color="inverse")
+col1.metric(label="Total Income", 
+            value=f"€{df['Income'].sum():.2f}",
+            delta="Gains")
+col2.metric(label="Total Expense",
+            value=f"€{df['Expense'].sum():.2f}",
+            delta="Losses",
+            delta_color="inverse")
 
 insights.check_alerts(df)
 
@@ -97,10 +96,9 @@ with col_ch1:
     spending = insights.get_spending_by_category(df)
     if not spending.empty:
         fig = px.bar(spending, x="Category", y="Expense", 
-                     title="Total Expenses per Category",
-                     labels={"Expense": "Amount (€)"},
-                     color="Category", 
-                     color_discrete_map=ctg.get_all_thresholds()  # just for colors? Better use category_colors
+                        title="Total Expenses per Category",
+                        labels={"Expense": "Amount (€)"},
+                        color="Category" 
                     )
         # Fix colors: use category_colors
         fig.update_traces(marker_color=[ctg.get_category_color(cat) for cat in spending["Category"]])

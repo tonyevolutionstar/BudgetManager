@@ -7,23 +7,36 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 
 @st.cache_resource
-def get_trained_model(df: pd.DataFrame):    
-    """Train multiple models and select the best."""
-    # Add multiple models
+def get_trained_model(df: pd.DataFrame):
+    if df.empty or "Description" not in df.columns or "Category" not in df.columns:
+        return None, df
+    
+    clean = df.dropna(subset=["Description", "Category"])
+    if len(clean) < 5:
+        return None, df
+    
+    x_train = clean["Description"]
+    y_train = clean["Category"]
+    
     models = {
         "naive_bayes": make_pipeline(TfidfVectorizer(), MultinomialNB()),
-        "random_forest": make_pipeline(TfidfVectorizer(), RandomForestClassifier()),
+        "random_forest": make_pipeline(TfidfVectorizer(), RandomForestClassifier(n_estimators=50)),
     }
     
-    # Cross-validate and select best
     best_model = None
     best_score = 0
     
     for name, model in models.items():
-        scores = cross_val_score(model, x_train, y_train, cv=3)
-        if scores.mean() > best_score:
-            best_score = scores.mean()
-            best_model = model
+        try:
+            scores = cross_val_score(model, clean, y_train, cv=min(3, len(clean)))
+            if scores.mean() > best_score:
+                best_score = scores.mean()
+                best_model = model
+        except Exception:
+            continue
+    
+    if best_model:
+        best_model.fit(x_train, y_train)
     
     return best_model, df
     
