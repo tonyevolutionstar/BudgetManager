@@ -2,10 +2,12 @@ import pandas as pd
 import tempfile, os
 import streamlit as st
 from data.bankStatementExtractor import BankStatementExtractor
+import src.utils.date as dateUtils
 
 CSV_COLUMNS = ["Date", "Date_Value", "Description", "Expense", "Income", "Accounting Balance", "Balance", "Category"]
 SUPPORTED_TYPES = ["csv", "pdf"]
 
+@st.cache_resource
 def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.DataFrame:
     mime = uploaded_file.type
     if mime.endswith(SUPPORTED_TYPES[0]):
@@ -74,8 +76,8 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                     skiprows=range(skip_rows),
                     header=0,  # First row after skip becomes header
                     parse_dates=[0, 1],
-                    date_format="%d/%m/%Y",
-                    na_values="null"
+                    date_format=dateUtils.DATE_FORMAT_FILE,
+                    encoding="latin1"
                 )
             else:
                 # Use specified header row
@@ -84,8 +86,8 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                     sep=";", 
                     header=header_row,
                     parse_dates=[0, 1],
-                    date_format="%d/%m/%Y",
-                    na_values="null"
+                    date_format=dateUtils.DATE_FORMAT_FILE,
+                    encoding="latin1"
                 )
         else:
             # Streamlit UploadedFile object
@@ -95,8 +97,8 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                 skiprows=range(skip_rows) if skip_rows > 0 else None,
                 header=0 if skip_rows > 0 else header_row,
                 parse_dates=[0, 1],
-                date_format="%d/%m/%Y",
-                na_values="null"
+                date_format=dateUtils.DATE_FORMAT_FILE,
+                encoding="latin1"
             )
         
         return normalize_dataframe(df)
@@ -107,6 +109,7 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
 
 def normalize_dataframe(df: pd.DataFrame):
     """Normalize DataFrame with better error handling."""
+    
     df = df.copy()
     
     # Use more robust date parsing

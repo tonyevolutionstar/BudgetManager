@@ -15,6 +15,6 @@ dependencies = [
     "sqlalchemy==2.0.51",
     "asyncio==4.0.0",
     "dotenv==0.9.9",
-    "python-dotenv==1.2.2"
+    "python-dotenv==1.2.2",
+    "schwifty==2026.3.0"
 ]
-DATABASE_URL='postgresql://neondb_owner:npg_uMVTgPlW12Qr@ep-withered-smoke-asbxahwj-pooler.c-4.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'

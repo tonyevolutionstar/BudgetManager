@@ -32,8 +32,6 @@ def init_session_state():
 # Call at app start
 init_session_state()
 
-df = st.session_state.df
-
 with st.expander("⚙️ CSV Import Settings"):
     col1, col2 = st.columns(2)
     with col1:
@@ -48,18 +46,19 @@ with st.expander("⚙️ CSV Import Settings"):
     )
     
     if st.button("Apply settings") and uploaded_file:
-        df = file.handle_upload_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
+        st.session_state.df = file.handle_upload_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
         st.success(f"CSV loaded with skip_rows={skip_rows} and header_row={header_row}")
+        st.dataframe(st.session_state.df)
 
 # Train model lazily (only when needed and not yet trained)
-if st.session_state.model is None and not df.empty:
-    model, _ = ctgAI.get_trained_model(df)
+if st.session_state.model is None and not st.session_state.df.empty:
+    model, _ = ctgAI.get_trained_model(df=st.session_state.df)
     st.session_state.model = model
 
 model = st.session_state.model
 today: date = dt.get_today()
 
-df, filter_type, start_date, end_date = dt.date_filter(df)
+df, filter_type, start_date, end_date = dt.date_filter(st.session_state.df)
 
 # -------------------------------
 # Main Dashboard
