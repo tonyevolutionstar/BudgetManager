@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 
-from data import categories as ctg
 from data import file
 from data import model as ctgAI
 from src.utils import date as dt
@@ -15,7 +14,6 @@ if "df" not in st.session_state:
 if "model" not in st.session_state:
     st.session_state.model = None
 
-ctg.initialize_categories()
 
 df: pd.DataFrame = st.session_state.df
 model = st.session_state.model

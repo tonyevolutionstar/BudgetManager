@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from data import categories as ctg
+import plotly.express as px
 
 def check_alerts(df: pd.DataFrame) -> int:
     """Display financial alerts based on spending data and category thresholds."""
@@ -15,12 +15,12 @@ def check_alerts(df: pd.DataFrame) -> int:
         alerts_count += 1
  
     # Per-category threshold alerts
-    for category, limit in ctg.get_all_thresholds().items():
+    for category, limit in st.session_state.categoryRepository.get_categories()["threshold"].items():
         if limit is None:
             continue
         spent = df[df["Category"] == category]["Expense"].sum()
         if spent > limit:
-            icon = ctg.get_category_icon(category)
+            icon = st.session_state.categoryRepository.get_category(category)["icon"]
             st.warning(
                 f"{icon} **{category}** spending (€{spent:.2f}) exceeds your threshold (€{limit:.2f})"
             )
@@ -57,3 +57,51 @@ def get_anomalies(df: pd.DataFrame) -> pd.DataFrame:
     Q3 = df["Expense"].quantile(0.75)
     IQR = Q3 - Q1
     return df[(df["Expense"] > Q3 + 1.5 * IQR) | (df["Expense"] < Q1 - 1.5 * IQR)]
+
+@st.cache_data
+def account_balance(df: pd.DataFrame):
+    df["Accounting Balance"] = df["Income"].sub(df["Expense"])
+    df["Balance"] = df["Accounting Balance"].cumsum()
+
+    # Metrics row
+    col1, col2 = st.columns(2)
+    col1.metric(label="Total Income", 
+                value=f"€{df['Income'].sum():.2f}",
+                delta="Gains")
+    col2.metric(label="Total Expense",
+                value=f"€{df['Expense'].sum():.2f}",
+                delta="Losses",
+                delta_color="inverse")
+    st.header("📊 Spending Analysis")
+    col_ch1, col_ch2 = st.columns(2)
+
+    with col_ch1:
+        st.subheader("Spending by Category")
+        spending = get_spending_by_category(df)
+        if not spending.empty:
+            fig = px.bar(spending, x="Category", y="Expense", 
+                            title="Total Expenses per Category",
+                            labels={"Expense": "Amount (€)"},
+                            color="Category" 
+                        )
+            # Fix colors: use category_colors
+            fig.update_traces(marker_color=[st.session_state.categoryRepository.get_category(cat)["name"] for cat in spending["Category"]])
+            st.plotly_chart(fig, width="content")
+        else:
+            st.info("No expense data to display.")
+
+    with col_ch2:
+        st.subheader("Expense Distribution")
+        expenses_df = df[df["Expense"] > 0]
+        if not expenses_df.empty:
+            fig_pie = px.pie(expenses_df, names="Category", values="Expense", 
+                            title="Expenses by Category", hole=0.4,
+                            color="Category",
+                            color_discrete_map={cat: st.session_state.categoryRepository.get_category(cat)["color"]  for cat in expenses_df["Category"].unique()})
+            st.plotly_chart(fig_pie, width="content")
+        else:
+            st.info("No expenses to show in pie chart.")
+
+@st.cache_data
+def spending_by_category(df, name):
+    pass

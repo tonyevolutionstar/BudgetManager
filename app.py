@@ -1,9 +1,9 @@
+from sqlalchemy import true
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
 
-from data import categories as ctg
 from data import file
 from data import model as ctgAI
 from src.utils import insights
@@ -12,7 +12,7 @@ from src.utils import date as dt
 # Page config must be the very first Streamlit call
 st.set_page_config(
     page_title="Budget Manager", 
-    page_icon=":material/finance:",
+    page_icon=":material/money_bag:",
     layout="wide",
     initial_sidebar_state="auto"
 )
@@ -32,7 +32,21 @@ def init_session_state():
 # Call at app start
 init_session_state()
 
-with st.expander("⚙️ CSV Import Settings"):
+# -------------------------------
+# Main Dashboard
+# -------------------------------
+st.title(":green[:material/money_bag:] Budget Manager")
+st.markdown("Manage your budget effectively by categorizing transactions and visualizing spending patterns.")
+
+model = st.session_state.model
+today: date = dt.get_today()
+
+df, filter_type, start_date, end_date = dt.date_filter(st.session_state.df)
+if df.empty:
+    st.info("No transactions yet. Use the sidebar to add your first transaction.")
+    st.stop()
+
+with st.expander("⚙️ CSV Import Settings", True):
     col1, col2 = st.columns(2)
     with col1:
         skip_rows = st.number_input("Rows to skip", min_value=0, max_value=20, value=6)
@@ -47,7 +61,6 @@ with st.expander("⚙️ CSV Import Settings"):
     
     if st.button("Apply settings") and uploaded_file:
         st.session_state.df = file.handle_upload_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
-        st.success(f"CSV loaded with skip_rows={skip_rows} and header_row={header_row}")
         st.dataframe(st.session_state.df)
 
 # Train model lazily (only when needed and not yet trained)
@@ -55,67 +68,9 @@ if st.session_state.model is None and not st.session_state.df.empty:
     model, _ = ctgAI.get_trained_model(df=st.session_state.df)
     st.session_state.model = model
 
-model = st.session_state.model
-today: date = dt.get_today()
 
-df, filter_type, start_date, end_date = dt.date_filter(st.session_state.df)
-
-# -------------------------------
-# Main Dashboard
-# -------------------------------
-st.title(":green[:material/money_bag:] Budget Manager")
-st.markdown("Manage your budget effectively by categorizing transactions and visualizing spending patterns.")
-
-if df.empty:
-    st.info("No transactions yet. Use the sidebar to add your first transaction.")
-    st.stop()
-
-# Calculate running balances
-df["Accounting Balance"] = df["Income"].sub(df["Expense"])
-df["Balance"] = df["Accounting Balance"].cumsum()
-
-# Metrics row
-col1, col2 = st.columns(2)
-col1.metric(label="Total Income", 
-            value=f"€{df['Income'].sum():.2f}",
-            delta="Gains")
-col2.metric(label="Total Expense",
-            value=f"€{df['Expense'].sum():.2f}",
-            delta="Losses",
-            delta_color="inverse")
-
+insights.account_balance(df)
 insights.check_alerts(df)
-
-# Charts
-st.header("📊 Spending Analysis")
-col_ch1, col_ch2 = st.columns(2)
-
-with col_ch1:
-    st.subheader("Spending by Category")
-    spending = insights.get_spending_by_category(df)
-    if not spending.empty:
-        fig = px.bar(spending, x="Category", y="Expense", 
-                        title="Total Expenses per Category",
-                        labels={"Expense": "Amount (€)"},
-                        color="Category" 
-                    )
-        # Fix colors: use category_colors
-        fig.update_traces(marker_color=[ctg.get_category_color(cat) for cat in spending["Category"]])
-        st.plotly_chart(fig, width="content")
-    else:
-        st.info("No expense data to display.")
-
-with col_ch2:
-    st.subheader("Expense Distribution")
-    expenses_df = df[df["Expense"] > 0]
-    if not expenses_df.empty:
-        fig_pie = px.pie(expenses_df, names="Category", values="Expense", 
-                         title="Expenses by Category", hole=0.4,
-                         color="Category",
-                         color_discrete_map={cat: ctg.get_category_color(cat) for cat in expenses_df["Category"].unique()})
-        st.plotly_chart(fig_pie, width="content")
-    else:
-        st.info("No expenses to show in pie chart.")
 
 # Time series
 st.subheader("Daily Income vs Expenses")

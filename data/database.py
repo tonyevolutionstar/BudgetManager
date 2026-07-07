@@ -1,42 +1,30 @@
 import streamlit as st
-from sqlalchemy import text
-import pandas as pd
-from streamlit.connections import SQLConnection
+from sqlalchemy import create_engine, engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
-@st.cache_resource
+# Create base first
+Base = declarative_base()
+conn = st.connection("neon", type='sql')
+st.write(f"Connection URL: {conn.engine.url}")  # Debugging line to check the connection URL
+# Create engine using the connection URL
+engine = create_engine(conn.engine.url, echo=True)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 def get_db_connection():
-    """Create and cache a Neon PostgreSQL connection via Streamlit"""
-    return st.connection("neon", type='sql')
-
-def execute_query(query: str) -> pd.DataFrame:
-    """Execute a SELECT query and return results as DataFrame"""
-    queryData: pd.DataFrame = pd.DataFrame()
-    try:
-        conn: SQLConnection = get_db_connection()
-        queryData = conn.query(query)
-    except Exception as e:
-        st.error(f"❌ Connection failed: {str(e)}")
-        st.info("Make sure your `.streamlit/secrets.toml` is configured correctly.")
+    """Get database connection."""
+    class DBConnection:
+        def __init__(self):
+            self.session = SessionLocal()
+        
+        def close(self):
+            if self.session:
+                self.session.close()
     
-    return queryData
+    return DBConnection()
 
-def execute_update(query: str) -> None:
-    """Execute an INSERT, UPDATE, or DELETE query""" 
-    try:
-    # Fetch categories
-        conn = get_db_connection()
-        conn.session.execute(text(query))
-        conn.session.commit()  
-    except Exception as e:
-        st.error(f"❌ Connection failed: {str(e)}")
-        st.info("Make sure your `.streamlit/secrets.toml` is configured correctly.")
-    
-
-def insert_transaction(date, description, amount, category, transaction_type):
-    """Insert a new transaction into the database"""
-    query = f"""
-    INSERT INTO Transactions (date, description, amount, category, type) 
-    VALUES ('{date}', '{description}', {amount}, '{category}', '{transaction_type}')
-    """
-    execute_update(query)
-
+def init_db():
+    """Create all tables."""
+    Base.metadata.create_all(bind=engine)
+    print("✅ Database initialized successfully")
