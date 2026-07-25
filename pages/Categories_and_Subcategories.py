@@ -1,12 +1,5 @@
 import streamlit as st
 import pandas as pd
-import sys
-import os
-
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Now use absolute imports
 from src.repository import CategoryRepository, CategoryTypeRepository, SubCategoryRepository
 
 # Page config must be the very first Streamlit call
@@ -52,33 +45,41 @@ def init_session_state():
 def load_all_data():
     """Load all data from repositories."""
     try:
+        # Define column names for consistency
+        category_columns = st.session_state.categoryRepository.columns
+        type_columns = st.session_state.categoryTypeRepository.columns
+        sub_columns = st.session_state.subCategoryRepository.columns
+        
         # Load categories
         categories = st.session_state.categoryRepository.get_all_categories()
-        if categories:
+        if categories and len(categories) > 0:
             st.session_state.categories_df = pd.DataFrame(categories)
         else:
-            st.session_state.categories_df = pd.DataFrame(columns=['id', 'name', 'categoryTypeId', 'color', 'icon', 'threshold'])
+            st.session_state.categories_df = pd.DataFrame(columns=category_columns)
         
         # Load category types
         types = st.session_state.categoryTypeRepository.get_category_types()
-        if types:
+        if types and len(types) > 0:
             st.session_state.category_types_df = pd.DataFrame(types)
         else:
-            st.session_state.category_types_df = pd.DataFrame(columns=['id', 'name'])
+            st.session_state.category_types_df = pd.DataFrame(columns=type_columns)
         
         # Load subcategories
         subs = st.session_state.subCategoryRepository.get_sub_categories()
-        if subs:
+        if subs and len(subs) > 0:
             st.session_state.sub_categories_df = pd.DataFrame(subs)
         else:
-            st.session_state.sub_categories_df = pd.DataFrame(columns=['id', 'categoryId', 'name'])
+            st.session_state.sub_categories_df = pd.DataFrame(columns=sub_columns)
         
         st.session_state.categories_initialized = True
+        st.success("✅ Data loaded successfully!")
+        
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
-        st.session_state.categories_df = pd.DataFrame(columns=['id', 'name', 'categoryTypeId', 'color', 'icon', 'threshold'])
-        st.session_state.category_types_df = pd.DataFrame(columns=['id', 'name'])
-        st.session_state.sub_categories_df = pd.DataFrame(columns=['id', 'categoryId', 'name'])
+        # Initialize empty DataFrames with proper columns
+        st.session_state.categories_df = pd.DataFrame(columns=st.session_state.categoryRepository.columns)
+        st.session_state.category_types_df = pd.DataFrame(columns=st.session_state.categoryTypeRepository.columns)
+        st.session_state.sub_categories_df = pd.DataFrame(columns=st.session_state.subCategoryRepository.columns)
 
 def get_category_type_name(type_id):
     """Get category type name from ID."""
@@ -114,45 +115,15 @@ if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
 st.sidebar.divider()
 
 # Create Category Button
-if st.sidebar.button("➕ Create Category", use_container_width=True, type="primary"):
+if st.sidebar.button("➕ New Category", use_container_width=True, type="primary"):
     st.session_state.show_create_dialog = True
-    st.rerun()
-
-# Update Category Button
-if st.sidebar.button("✏️ Update Category", use_container_width=True):
-    if st.session_state.categories_df.empty:
-        st.sidebar.warning("No categories to update")
-    else:
-        st.session_state.show_update_dialog = True
-        st.rerun()
-
-# Remove Category Button
-if st.sidebar.button("🗑️ Remove Category", use_container_width=True):
-    if st.session_state.categories_df.empty:
-        st.sidebar.warning("No categories to remove")
-    else:
-        st.session_state.show_remove_dialog = True
-        st.rerun()
-
-st.sidebar.divider()
-
-# Statistics
-st.sidebar.subheader("📊 Statistics")
-if not st.session_state.categories_df.empty:
-    total = len(st.session_state.categories_df)
-    st.sidebar.metric("Total Categories", total)
     
-    # Count by type
-    if 'typeId' in st.session_state.categories_df.columns:
-        expense_count = len(st.session_state.categories_df[st.session_state.categories_df['typeId'] == 1])
-        income_count = len(st.session_state.categories_df[st.session_state.categories_df['typeId'] == 2])
-        st.sidebar.metric("Expenses", expense_count)
-        st.sidebar.metric("Incomes", income_count)
-else:
-    st.sidebar.info("No categories loaded")
+# Create SubCategory Button
+if st.sidebar.button("➕ New SubCategory", use_container_width=True, type="primary"):
+    st.session_state.show_create_subcategory_dialog = True
 
 # ==================== DIALOGS ====================
-@st.dialog("➕ Create New Category")
+@st.dialog("➕ New Category")
 def create_category_dialog():
     """Dialog for creating new category."""
     with st.form("create_category_form"):
@@ -205,19 +176,19 @@ def create_category_dialog():
             
             try:
                 # Add category
-                success = st.session_state.categoryRepository.add_category(
+                success, message = st.session_state.categoryRepository.add_category(
                     name=name.strip(),
-                    typeId=type_id,
+                    categoryTypeId=type_id,
                     color=color,
                     icon=icon if icon else "📂",
                     threshold=threshold if threshold > 0 else 0
                 )
                 
                 if success:
-                    st.success(f"✅ Category '{name}' created successfully!")
+                    st.success(f"✅ {message}")
                     refresh_data()
                 else:
-                    st.error("❌ Failed to create category. It may already exist.")
+                    st.error(f"❌ {message}")
             except Exception as e:
                 st.error(f"❌ Error creating category: {str(e)}")
         
@@ -250,18 +221,26 @@ def update_category_dialog():
                 
                 # Get type names
                 type_names = st.session_state.category_types_df['name'].tolist() if not st.session_state.category_types_df.empty else []
-                current_type = get_category_type_name(category['typeId'])
+                
+                # Get current type
+                current_type_id = category.get('categoryTypeId')
+                current_type_name = get_category_type_name(current_type_id) if current_type_id else "Expense"
+                
+                # Ensure current_type_name is in type_names
+                if current_type_name not in type_names and type_names:
+                    current_type_name = type_names[0] if type_names else "Expense"
+                
                 cat_type = st.selectbox(
                     "Category Type *",
                     options=type_names if type_names else ["Expense"],
-                    index=type_names.index(current_type) if current_type in type_names else 0
+                    index=type_names.index(current_type_name) if current_type_name in type_names else 0
                 )
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    color = st.color_picker("Category Color", value=category.get('color', '#FF6B6B'))
+                    color = st.color_picker("Color")
                 with col2:
-                    icon = st.text_input("Icon (emoji)", value=category.get('icon', '📂'))
+                    icon = st.text_input("Icon (emoji)")
                 
                 threshold = st.number_input(
                     "Threshold (optional)",
@@ -278,10 +257,6 @@ def update_category_dialog():
                     canceled = st.form_submit_button("❌ Cancel", use_container_width=True)
                 
                 if submitted:
-                    if not name.strip():
-                        st.warning("⚠️ Please enter a category name")
-                        return
-                    
                     # Get type ID
                     type_id = None
                     if not st.session_state.category_types_df.empty:
@@ -294,20 +269,20 @@ def update_category_dialog():
                         return
                     
                     try:
-                        success = st.session_state.categoryRepository.update_category(
+                        success, message = st.session_state.categoryRepository.update_category(
                             id=category['id'],
-                            name=name.strip(),
-                            typeId=type_id,
+                            name=name,
+                            categoryTypeId=type_id,
                             color=color,
-                            icon=icon if icon else "📂",
+                            icon=icon,
                             threshold=threshold if threshold > 0 else 0
                         )
                         
                         if success:
-                            st.success(f"✅ Category '{name}' updated successfully!")
+                            st.success(f"✅ {message}")
                             refresh_data()
                         else:
-                            st.error("❌ Failed to update category")
+                            st.error(f"❌ {message}")
                     except Exception as e:
                         st.error(f"❌ Error updating category: {str(e)}")
                 
@@ -363,6 +338,52 @@ def remove_category_dialog():
                     st.session_state.show_remove_dialog = False
                     st.rerun()
 
+@st.dialog("➕ New SubCategory")
+def create_subcategory_dialog():
+    """Dialog for creating new category."""
+    with st.form("create_sub_category_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_category = st.selectbox(
+                "Select Category",
+                options=st.session_state.categories_df['name'].tolist(),
+                key="sub_category_select"
+            )        
+        with col2:    
+            new_sub = st.text_input("Subcategory Name", placeholder="e.g., Rent", key="new_sub_name")
+
+        # Buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            submitted = st.form_submit_button("✅ Confirm", use_container_width=True, type="primary")
+        with col2:
+            canceled = st.form_submit_button("❌ Cancel", use_container_width=True)
+        
+        if submitted:
+            if new_sub.strip() and selected_category:
+                # Get category ID
+                cat_data = st.session_state.categories_df[st.session_state.categories_df['name'] == selected_category]
+                if not cat_data.empty:
+                    category_id = cat_data.iloc[0]['id']
+                    try:
+                        success = st.session_state.subCategoryRepository.add_sub_category(
+                            categoryId=category_id,
+                            name=new_sub.strip()
+                        )
+                        if success:
+                            st.success(f"✅ Subcategory '{new_sub}' added to '{selected_category}'")
+                            refresh_data()
+                        else:
+                            st.error("❌ Failed to add subcategory")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+            else:
+                st.warning("⚠️ Please enter a subcategory name")
+        
+        if canceled:
+            st.session_state.show_create_subcategory_dialog = False
+            st.rerun()
+
 # ==================== SHOW DIALOGS ====================
 if st.session_state.get('show_create_dialog', False):
     create_category_dialog()
@@ -372,10 +393,11 @@ if st.session_state.get('show_update_dialog', False):
 
 if st.session_state.get('show_remove_dialog', False):
     remove_category_dialog()
+    
+if st.session_state.get('show_create_subcategory_dialog', False):
+    create_subcategory_dialog()
 
 # ==================== MAIN CONTENT ====================
-st.header("📋 Current Categories")
-
 if st.session_state.categories_df.empty:
     st.info("No categories found. Create your first category using the sidebar!")
 else:
@@ -387,11 +409,12 @@ else:
             with st.container(border=True):
                 # Header with icon and name
                 icon = row.get('icon', '📂')
-                name = row['name']
+                name = row.get('name', 'Unknown')
                 st.markdown(f"### {icon} {name}")
                 
                 # Type badge
-                type_name = get_category_type_name(row['typeId'])
+                type_id = row['categoryTypeId']
+                type_name = get_category_type_name(type_id) if type_id else "Unknown"
                 badge_color = "green" if type_name.lower() == "income" else "red"
                 st.markdown(f":{badge_color}-badge[{type_name}]")
                 
@@ -415,15 +438,11 @@ else:
                 # Subcategories count
                 subcategories = get_subcategories_for_category(row['id'])
                 if subcategories:
-                    st.caption(f"📌 {len(subcategories)} subcategories")
-                    with st.expander(f"View subcategories"):
-                        for sub in subcategories:
-                            st.write(f"- {sub}")
+                    for sub in subcategories:
+                        st.badge(f"{sub}")
                 else:
                     st.caption("No subcategories")
-                
-                st.markdown("---")
-                
+                                
                 # Quick actions
                 col1, col2 = st.columns(2)
                 with col1:
@@ -432,77 +451,6 @@ else:
                         st.session_state.show_update_dialog = True
                         st.rerun()
                 with col2:
-                    if st.button("🗑️", key=f"delete_{row['id']}", use_container_width=True):
+                    if st.button("🗑️ Remove", key=f"delete_{row['id']}", use_container_width=True):
                         st.session_state.show_remove_dialog = True
-                        # Pre-select this category
                         st.rerun()
-
-# ==================== SUB-CATEGORIES SECTION ====================
-st.divider()
-st.header("📌 Subcategories")
-
-if not st.session_state.categories_df.empty:
-    # Add subcategory
-    with st.expander("➕ Add Subcategory", expanded=False):
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            selected_category = st.selectbox(
-                "Select Category",
-                options=st.session_state.categories_df['name'].tolist(),
-                key="sub_category_select"
-            )
-        with col2:
-            new_sub = st.text_input("Subcategory Name", placeholder="e.g., Rent", key="new_sub_name")
-        
-        if st.button("➕ Add Subcategory", use_container_width=True):
-            if new_sub.strip() and selected_category:
-                # Get category ID
-                cat_data = st.session_state.categories_df[st.session_state.categories_df['name'] == selected_category]
-                if not cat_data.empty:
-                    category_id = cat_data.iloc[0]['id']
-                    try:
-                        success = st.session_state.subCategoryRepository.add_sub_category(
-                            categoryId=category_id,
-                            name=new_sub.strip()
-                        )
-                        if success:
-                            st.success(f"✅ Subcategory '{new_sub}' added to '{selected_category}'")
-                            refresh_data()
-                        else:
-                            st.error("❌ Failed to add subcategory")
-                    except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
-            else:
-                st.warning("⚠️ Please enter a subcategory name")
-    
-    # Display subcategories
-    if not st.session_state.sub_categories_df.empty:
-        # Join with categories
-        sub_cats = st.session_state.sub_categories_df.merge(
-            st.session_state.categories_df[['id', 'name']],
-            left_on='categoryId',
-            right_on='id',
-            suffixes=('_sub', '_cat')
-        )
-        
-        if not sub_cats.empty:
-            # Group by category
-            for category_name in st.session_state.categories_df['name']:
-                category_subs = sub_cats[sub_cats['name_cat'] == category_name]
-                if not category_subs.empty:
-                    with st.expander(f"📂 {category_name} ({len(category_subs)} subcategories)", expanded=False):
-                        for _, sub in category_subs.iterrows():
-                            col1, col2 = st.columns([4, 1])
-                            with col1:
-                                st.write(f"• {sub['name_sub']}")
-                            with col2:
-                                if st.button("🗑️", key=f"del_sub_{sub['id_sub']}"):
-                                    try:
-                                        success = st.session_state.subCategoryRepository.remove_sub_category(sub['id_sub'])
-                                        if success:
-                                            st.success(f"✅ Removed: {sub['name_sub']}")
-                                            refresh_data()
-                                    except Exception as e:
-                                        st.error(f"❌ Error: {str(e)}")
-else:
-    st.info("Create categories first to add subcategories")

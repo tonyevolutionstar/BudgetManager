@@ -28,7 +28,12 @@ def get_trained_model(df: pd.DataFrame):
     
     for name, model in models.items():
         try:
-            scores = cross_val_score(model, clean, y_train, cv=min(3, len(clean)))
+            scores = cross_val_score(
+                model,
+                clean,
+                y_train,
+                cv=min(3, len(clean))
+            )            
             if scores.mean() > best_score:
                 best_score = scores.mean()
                 best_model = model

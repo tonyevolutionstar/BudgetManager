@@ -3,6 +3,7 @@ import pandas as pd
 
 from data import file
 from data import model as ctgAI
+from src.repository import CategoryRepository
 from src.utils import date as dt
 
 st.title("📊 Transactions")
@@ -17,6 +18,21 @@ if "model" not in st.session_state:
 
 df: pd.DataFrame = st.session_state.df
 model = st.session_state.model
+
+
+def get_categories():
+    """Return the available category names for the transaction form."""
+    if "categoryRepository" not in st.session_state or st.session_state.categoryRepository is None:
+        st.session_state.categoryRepository = CategoryRepository()
+
+    try:
+        categories = st.session_state.categoryRepository.get_all_categories()
+        if categories:
+            return [category.get("name") for category in categories if category.get("name")]
+    except Exception:
+        pass
+
+    return ["Others"]
 
 # Train model lazily if needed
 if model is None and not df.empty:
@@ -48,7 +64,7 @@ with st.sidebar.form("transaction_form", clear_on_submit=True, enter_to_submit=F
 
     # Suggest category from description using the ML model
     suggested = ctgAI.predict_category(model, description) if description else "Others"
-    categories = ctg.get_categories()
+    categories = get_categories()
     default_idx = categories.index(suggested) if suggested in categories else 0
     category = st.selectbox("Category", categories, index=default_idx)
 

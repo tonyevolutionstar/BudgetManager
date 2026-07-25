@@ -1,77 +1,59 @@
-from data.database import get_db_connection
-from data.models.subCategory import SubCategory
-from data.models.category import Category
-from sqlalchemy.exc import SQLAlchemyError
-from typing import List, Dict
 import logging
+from data.database import fetch_query_results, perform_database_operation
 
 logger = logging.getLogger(__name__)
 
 class SubCategoryRepository:
     def __init__(self):
-        self.session = get_db_connection().session
-    
-    def get_sub_categories(self) -> List[Dict]:
+        self.columns = ["id", "name", "categoryId"]
+        
+    def get_sub_categories(self):
         """Retrieve all subcategories."""
-        try:
-            subs = self.session.query(SubCategory).order_by(SubCategory.name).all()
-            return [{'id': s.id, 'name': s.name, 'categoryId': s.categoryId} for s in subs]
-        except SQLAlchemyError as e:
-            logger.error(f"Error retrieving subcategories: {str(e)}")
-            return []
-        finally:
-            self.session.close()
+        query = """
+            SELECT id, name, categoryId
+            FROM SubCategory 
+        """
+        result = fetch_query_results(query)
+        if result.empty:
+            return {}
+        return result.to_dict(orient="records")
     
-    def add_sub_category(self, categoryId: int, name: str) -> bool:
+    def get_sub_categories_by_category(self, category_id: int):
+        """Retrieve subcategories for a specific category."""
+        query = """
+                SELECT sc.id, sc.name as subCategory, c.Name as category 
+                FROM SubCategory sc 
+                JOIN Category c on sc.categoryId = c.id
+                WHERE categoryId = :category_id
+                ORDER BY c.name, sc.name
+            """
+        result = fetch_query_results(query, params={"category_id": category_id})
+        if result.empty:
+            return {}
+        return result.to_dict(orient="records")
+    
+    def add_sub_category(self, categoryId: int, name: str) -> tuple[bool, str]:
         """Add a new subcategory."""
-        try:
-            # Check if category exists
-            category = self.session.query(Category).filter(Category.id == categoryId).first()
-            if not category:
-                return False
-            
-            # Check if subcategory already exists for this category
-            existing = self.session.query(SubCategory).filter(
-                SubCategory.categoryId == categoryId,
-                SubCategory.name == name
-            ).first()
-            if existing:
-                return False
-            
-            new_sub = SubCategory(
-                categoryId=categoryId,
-                name=name
-            )
-            
-            self.session.add(new_sub)
-            self.session.commit()
-            
-            logger.info(f"Subcategory '{name}' added to category {categoryId}")
-            return True
-            
-        except SQLAlchemyError as e:
-            self.session.rollback()
-            logger.error(f"Error adding subcategory: {str(e)}")
-            return False
-        finally:
-            self.session.close()
-    
+        existing_query = """
+            SELECT id
+            FROM SubCategory
+            WHERE categoryId = :categoryId
+              AND LOWER(name) = LOWER(:name)
+        """
+        existing = fetch_query_results(existing_query, params={"categoryId": categoryId, "name": name})
+        if not existing.empty:
+            return False, f"Subcategory '{name}' already exists."
+
+        insert_query = """
+            INSERT INTO SubCategory (name, categoryId)
+            VALUES (:name, :categoryId)
+        """
+        perform_database_operation(insert_query, params={"name": name, "categoryId": categoryId})
+
+        return True, f"Subcategory '{name}' added successfully."
+       
     def remove_sub_category(self, id: int) -> bool:
         """Remove a subcategory by ID."""
-        try:
-            sub = self.session.query(SubCategory).filter(SubCategory.id == id).first()
-            if not sub:
-                return False
-            
-            self.session.delete(sub)
-            self.session.commit()
-            
-            logger.info(f"Subcategory '{sub.name}' removed successfully")
-            return True
-            
-        except SQLAlchemyError as e:
-            self.session.rollback()
-            logger.error(f"Error removing subcategory: {str(e)}")
-            return False
-        finally:
-            self.session.close()
+        query = 'DELETE FROM SubCategory WHERE id = :id'
+        result = perform_database_operation(query=query, params={"id": id})
+        return True

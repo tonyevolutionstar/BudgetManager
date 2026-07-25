@@ -1,30 +1,33 @@
 import streamlit as st
-from sqlalchemy import create_engine, engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-
-# Create base first
-Base = declarative_base()
-conn = st.connection("neon", type='sql')
-st.write(f"Connection URL: {conn.engine.url}")  # Debugging line to check the connection URL
-# Create engine using the connection URL
-engine = create_engine(conn.engine.url, echo=True)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+from sqlalchemy import text
+import pandas as pd
 
 def get_db_connection():
-    """Get database connection."""
-    class DBConnection:
-        def __init__(self):
-            self.session = SessionLocal()
-        
-        def close(self):
-            if self.session:
-                self.session.close()
-    
-    return DBConnection()
+    """Get database connection using Streamlit's native connection."""
+    try:
+        return st.connection("neon", type="sql")
+    except Exception as e:
+        st.error(f"Database connection error: {str(e)}")
+        raise
 
-def init_db():
-    """Create all tables."""
-    Base.metadata.create_all(bind=engine)
-    print("✅ Database initialized successfully")
+def fetch_query_results(query, params=None):
+    """Execute a query and return results as DataFrame."""
+    conn = get_db_connection()
+    try:
+        return conn.query(query, params=params)
+    except Exception as e:
+        st.error(f"Query execution error: {str(e)}")
+        raise
+
+def perform_database_operation(query, params=None):
+    """Execute an insert/update/delete query."""
+    conn = get_db_connection()
+    try:
+        with conn.session as session:
+            result = session.execute(text(query), params or {})
+            session.commit()
+            return result
+    except Exception as e:
+        st.error(f"Query execution error: {str(e)}")
+        conn.session.rollback()
+        raise

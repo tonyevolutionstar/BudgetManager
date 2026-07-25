@@ -2,8 +2,8 @@ import pandas as pd
 import streamlit as st
 from datetime import date, datetime
 
-DATE_FORMAT_FILE = "%d/%m/%Y"
-DATE_FORMAT_DISPLAY = "DD/MM/YYYY"
+DATE_FORMAT_FILE = '%d/%m/%Y'
+DATE_FORMAT_DISPLAY = 'DD/MM/YYYY'
 
 def get_today() -> date:
     """Return today's date (date, not datetime)."""
@@ -64,7 +64,7 @@ def date_filter(df: pd.DataFrame) -> tuple[pd.DataFrame, str, date | datetime, d
 
     # Display current filter info in sidebar
     if filter_type == "Today":
-        st.sidebar.info(f"Showing data for **{today.strftime("%d of %B")}**")
+        st.sidebar.info(f"Showing data for **{today.strftime('%d of %B')}**")
     elif filter_type == "This Month":
-        st.sidebar.info(f"Showing data for **{today.strftime("%B")}**")
+        st.sidebar.info(f"Showing data for **{today.strftime('%B')}**")
     return filtered_df, filter_type, start_date, end_date

@@ -138,9 +138,9 @@ def normalize_dataframe(df: pd.DataFrame, src_lang="pt", det_lang="en"):
     for col in [df.columns[3], df.columns[4], df.columns[5], df.columns[6]]:
         df[col] = df[col].str.replace(".", "").str.replace(",", ".").astype(float).fillna(0.0)
 
-    df[-1] = df[-1].str.capitalize()
+    last_col = df.columns[-1]
+    df[last_col] = df[last_col].astype(str).str.capitalize()
     return df
-
 
 def search_last_column_fast(df, search_text):
     """

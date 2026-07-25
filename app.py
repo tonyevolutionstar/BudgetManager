@@ -44,9 +44,8 @@ today: date = dt.get_today()
 df, filter_type, start_date, end_date = dt.date_filter(st.session_state.df)
 if df.empty:
     st.info("No transactions yet. Use the sidebar to add your first transaction.")
-    st.stop()
 
-with st.expander("⚙️ CSV Import Settings", True):
+with st.expander(":material/settings: Import transactions", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
         skip_rows = st.number_input("Rows to skip", min_value=0, max_value=20, value=6)
@@ -59,7 +58,7 @@ with st.expander("⚙️ CSV Import Settings", True):
         accept_multiple_files=False
     )
     
-    if st.button("Apply settings") and uploaded_file:
+    if st.button(":material/done_outline: Confirm") and uploaded_file:
         st.session_state.df = file.handle_upload_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
         st.dataframe(st.session_state.df)
 
@@ -69,22 +68,22 @@ if st.session_state.model is None and not st.session_state.df.empty:
     st.session_state.model = model
 
 
-insights.account_balance(df)
-insights.check_alerts(df)
+# insights.account_balance(df)
+# insights.check_alerts(df)
 
-# Time series
-st.subheader("Daily Income vs Expenses")
-daily = insights.get_daily_income_expenses(df)
-if not daily.empty:
-    fig_line = px.line(daily, x="Date", y=["Expense", "Income"], 
-                       title="Daily Trends",
-                       labels={"value": "Amount (€)", "variable": "Type"},
-                       color_discrete_map={"Expense": "red", "Income": "green"})
-    st.plotly_chart(fig_line, use_container_width=True)
-else:
-    st.info("Not enough data for time series.")
+# # Time series
+# st.subheader("Daily Income vs Expenses")
+# daily = insights.get_daily_income_expenses(df)
+# if not daily.empty:
+#     fig_line = px.line(daily, x="Date", y=["Expense", "Income"], 
+#                        title="Daily Trends",
+#                        labels={"value": "Amount (€)", "variable": "Type"},
+#                        color_discrete_map={"Expense": "red", "Income": "green"})
+#     st.plotly_chart(fig_line, use_container_width=True)
+# else:
+#     st.info("Not enough data for time series.")
 
-# Transaction History
-st.header("📜 Transaction History")
-st.dataframe(df, use_container_width=True)
+# # Transaction History
+# st.header("📜 Transaction History")
+# st.dataframe(df, use_container_width=True)
 
