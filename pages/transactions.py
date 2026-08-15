@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 
-from data import file
-from data import model as ctgAI
+from service import FileImporterService
+from service import ClassifierService as classifier
 from src.repository import CategoryRepository
 from src.utils import date as dt
 
@@ -10,38 +10,34 @@ st.title("📊 Transactions")
 
 # Guard: ensure shared state exists before anything else
 if "df" not in st.session_state:
-    st.session_state.df = pd.DataFrame(columns=file.CSV_COLUMNS)
+    st.session_state.df = pd.DataFrame(columns=FileImporterService.CSV_COLUMNS)
 
 if "model" not in st.session_state:
     st.session_state.model = None
 
-
 df: pd.DataFrame = st.session_state.df
 model = st.session_state.model
 
-
 def get_categories():
-    """Return the available category names for the transaction form."""
+    """Return category names from the DB, falling back to ['Others']."""
     if "categoryRepository" not in st.session_state or st.session_state.categoryRepository is None:
         st.session_state.categoryRepository = CategoryRepository()
 
     try:
         categories = st.session_state.categoryRepository.get_all_categories()
         if categories:
-            return [category.get("name") for category in categories if category.get("name")]
-    except Exception:
-        pass
+            names = [c.get('name') for c in categories if c.get('name')]
+            if names:
+                return names
+    except Exception as e:
+        st.error(f"Error fetching categories: {e}")
 
-    return ["Others"]
+    return ['Others']
 
-# Train model lazily if needed
 if model is None and not df.empty:
-    model, _ = ctgAI.get_trained_model(df)
+    model = classifier.TransactionClassifier()
     st.session_state.model = model
 
-# -------------------------------
-# Sidebar: Create new Transaction
-# -------------------------------
 st.sidebar.header("New Transaction")
 
 def _reset_amount():
@@ -49,7 +45,7 @@ def _reset_amount():
     st.session_state["_amount"] = 0.0
 
 with st.sidebar.form("transaction_form", clear_on_submit=True, enter_to_submit=False):
-    transaction_date = st.date_input("Date", value=dt.get_today(), format="DD/MM/YYYY")
+    transaction_date = st.date_input("Date", value=dt.get_today(), format=dt.DATE_FORMAT_DISPLAY)
     description = st.text_input("Description")
 
     # NOTE: on_change must be a callable reference, not a call expression
@@ -60,10 +56,12 @@ with st.sidebar.form("transaction_form", clear_on_submit=True, enter_to_submit=F
         min_value=0.0,
         step=0.5,
         format="%.2f",
+        key="_amount"
     )
-
-    # Suggest category from description using the ML model
-    suggested = ctgAI.predict_category(model, description) if description else "Others"
+    
+    st.session_state.model = model
+    assert st.session_state.model is not None
+    suggested = st.session_state.model.classify(description).category if description else "Others"
     categories = get_categories()
     default_idx = categories.index(suggested) if suggested in categories else 0
     category = st.selectbox("Category", categories, index=default_idx)
@@ -96,7 +94,7 @@ with st.sidebar.form("transaction_form", clear_on_submit=True, enter_to_submit=F
             st.session_state.df = pd.concat(
                 [st.session_state.df, new_row], ignore_index=True
             )
-            file.save_dataframe(st.session_state.df)
+            FileImporterService.save_dataframe(st.session_state.df)
 
             # Invalidate model so it retrains with the new transaction
             st.session_state.model = None

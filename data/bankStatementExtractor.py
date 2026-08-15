@@ -303,30 +303,6 @@ class BankStatementExtractor:
         return transactions
 
     # ------------------------------------------------------------------
-    # Statistics
-    # ------------------------------------------------------------------
-
-    def _category_stats(self, transactions: list[dict]) -> dict[str, dict]:
-        """Compute per-category aggregates."""
-        stats: dict[str, dict] = {}
-        for t in transactions:
-            cat = t["category"]
-            if cat not in stats:
-                stats[cat] = {"total_spent": 0.0, "total_received": 0.0,
-                              "num_transactions": 0, "avg_confidence": 0.0}
-            stats[cat]["total_spent"] += t["debit"]
-            stats[cat]["total_received"] += t["credit"]
-            stats[cat]["num_transactions"] += 1
-            stats[cat]["avg_confidence"] += t["category_confidence"]
-
-        for cat in stats:
-            n = stats[cat]["num_transactions"]
-            if n:
-                stats[cat]["avg_confidence"] /= n
-
-        return stats
-
-    # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 

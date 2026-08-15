@@ -1,28 +1,41 @@
+import logging
+import os
+import tempfile
+
 import pandas as pd
-import tempfile, os
-from pdfplumber.convert import CSV_COLS_TO_PREPEND
 import streamlit as st
+
 from data.bankStatementExtractor import BankStatementExtractor
 import src.utils.date as dateUtils
-from googletrans import Translator
+
+logger = logging.getLogger(__name__)
 
 CSV_COLUMNS = ["Date", "BalanceDate", "Description", "Expense", "Income", "Accounting Balance", "Balance", "Category"]
 SUPPORTED_TYPES = ["csv", "pdf"]
 
-@st.cache_resource
-def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.DataFrame:
+def handle_upload_file(
+    uploaded_file, skip_rows: int, header_row: int
+) -> pd.DataFrame:
+    """Route the uploaded file to the correct loader and update session state."""
     mime = uploaded_file.type
+ 
     if mime.endswith(SUPPORTED_TYPES[0]):
-        st.session_state.df = load_csv_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
-        st.session_state.model = None
+        df = load_csv_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
     elif mime.endswith(SUPPORTED_TYPES[1]):
-        st.session_state.df = load_pdf_file(uploaded_file)
-    
-    return st.session_state.df
+        df = load_pdf_file(uploaded_file)
+    else:
+        st.error(f"Unsupported file type: {mime}")
+        return pd.DataFrame(columns=CSV_COLUMNS)
+ 
+    st.session_state.df = df
+    st.session_state.model = None   # force retrain
+    return df
 
 def load_pdf_file(file) -> pd.DataFrame:
+    """Load transactions from a PDF bank statement using the BankStatementExtractor."""
     extractor = BankStatementExtractor()
     pdf_df = pd.DataFrame()
+    
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(file.read())
             tmp_path = tmp.name
@@ -77,7 +90,7 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                     skiprows=range(skip_rows),
                     header=0,  # First row after skip becomes header
                     parse_dates=[0, 1],
-                    date_format=dateUtils.DATE_FORMAT_FILE,
+                    date_format={0: dateUtils.DATE_FORMAT_FILE, 1: dateUtils.DATE_FORMAT_FILE},
                     na_values=['', ' '],
                     encoding='latin1'
                 )
@@ -88,7 +101,7 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                     sep=";", 
                     header=header_row,
                     parse_dates=[0, 1],
-                    date_format=dateUtils.DATE_FORMAT_FILE,
+                    date_format={0: dateUtils.DATE_FORMAT_FILE, 1: dateUtils.DATE_FORMAT_FILE},
                     na_values=['', ' '],
                     encoding='latin1'
                 )
@@ -100,7 +113,7 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                 skiprows=range(skip_rows) if skip_rows > 0 else None,
                 header=0 if skip_rows > 0 else header_row,
                 parse_dates=[0, 1],
-                date_format=dateUtils.DATE_FORMAT_FILE,
+                date_format={0: dateUtils.DATE_FORMAT_FILE, 1: dateUtils.DATE_FORMAT_FILE},
                 na_values=['', ' '],
                 encoding='latin1'
             )
@@ -130,9 +143,9 @@ def normalize_dataframe(df: pd.DataFrame, src_lang="pt", det_lang="en"):
     
     df.columns = df.columns.str.strip()
     # Use more robust date parsing
-    for col in [df.columns[0], df.columns[1]]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
+    # for col in [df.columns[0], df.columns[1]]:
+    #     if col in df.columns:
+    #         df[col] = df[col].format(dateUtils.DATE_FORMAT_FILE, errors='coerce')
     
     # Use nullable types for numeric columns
     for col in [df.columns[3], df.columns[4], df.columns[5], df.columns[6]]:
