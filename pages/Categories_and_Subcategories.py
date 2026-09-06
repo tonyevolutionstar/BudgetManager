@@ -94,7 +94,7 @@ def get_subcategories_for_category(category_id):
     """Get subcategories for a specific category."""
     if st.session_state.sub_categories_df.empty:
         return []
-    subs = st.session_state.sub_categories_df[st.session_state.sub_categories_df['categoryId'] == category_id]
+    subs = st.session_state.sub_categories_df[st.session_state.sub_categories_df['categoryid'] == category_id]
     return subs['name'].tolist()
 
 def refresh_data():
@@ -413,7 +413,7 @@ else:
                 st.markdown(f"### {icon} {name}")
                 
                 # Type badge
-                type_id = row['categoryTypeId']
+                type_id = row['categorytypeid']
                 type_name = get_category_type_name(type_id) if type_id else "Unknown"
                 badge_color = "green" if type_name.lower() == "income" else "red"
                 st.markdown(f":{badge_color}-badge[{type_name}]")

@@ -13,9 +13,7 @@ logger = logging.getLogger(__name__)
 CSV_COLUMNS = ["Date", "BalanceDate", "Description", "Expense", "Income", "Accounting Balance", "Balance", "Category"]
 SUPPORTED_TYPES = ["csv", "pdf"]
 
-def handle_upload_file(
-    uploaded_file, skip_rows: int, header_row: int
-) -> pd.DataFrame:
+def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.DataFrame:
     """Route the uploaded file to the correct loader and update session state."""
     mime = uploaded_file.type
  
@@ -91,6 +89,7 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                     header=0,  # First row after skip becomes header
                     parse_dates=[0, 1],
                     date_format={0: dateUtils.DATE_FORMAT_FILE, 1: dateUtils.DATE_FORMAT_FILE},
+                    dayfirst=True,
                     na_values=['', ' '],
                     encoding='latin1'
                 )
@@ -99,9 +98,9 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                 st.session_state.df = pd.read_csv(
                     file, 
                     sep=";", 
-                    header=header_row,
                     parse_dates=[0, 1],
                     date_format={0: dateUtils.DATE_FORMAT_FILE, 1: dateUtils.DATE_FORMAT_FILE},
+                    dayfirst=True,                    
                     na_values=['', ' '],
                     encoding='latin1'
                 )
@@ -114,6 +113,7 @@ def load_csv_file(file, skip_rows: int, header_row: int) -> pd.DataFrame:
                 header=0 if skip_rows > 0 else header_row,
                 parse_dates=[0, 1],
                 date_format={0: dateUtils.DATE_FORMAT_FILE, 1: dateUtils.DATE_FORMAT_FILE},
+                dayfirst=True,
                 na_values=['', ' '],
                 encoding='latin1'
             )

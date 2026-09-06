@@ -13,7 +13,7 @@ class CategoryRepository:
     def get_all_categories(self) -> list[dict]:
         """Retrieve all categories with their types."""
         query = """
-                SELECT id, name, categorytypeid, color, icon, threshold
+                SELECT *
                 FROM category
                 ORDER BY name
             """         
@@ -28,7 +28,7 @@ class CategoryRepository:
     def get_category_by_name(self, name: str) -> list[dict]:
         """Retrieve a category by its name."""
         query = """
-                SELECT id, name, categorytypeid, color, icon, threshold
+                SELECT *
                 FROM category
                 WHERE name = :name
             """
@@ -41,7 +41,7 @@ class CategoryRepository:
         """Retrieve a category by its ID."""
         st.info(f"Fetching category with ID: {categoryId}")
         query = """
-                SELECT id, name, categoryTypeId, color, icon, threshold
+                SELECT *
                 FROM Category 
                 WHERE id = :id
             """
@@ -50,7 +50,7 @@ class CategoryRepository:
             return []
         return result.to_dict(orient="records")
     
-    def add_category(self, name: str, categoryTypeId: int, color: str, icon: str, threshold: float) -> Tuple[bool, str]:
+    def add_category(self, name: str, categoryTypeId: int, color: str, icon: str, monthlyBudget: float) -> Tuple[bool, str]:
         """Add a new Category""" 
         # Check if category already exists
         existing = self.get_category_by_name(name)
@@ -58,8 +58,8 @@ class CategoryRepository:
             return False, f"Category '{name}' already exists."
             
         query = """
-            INSERT INTO Category (name, categoryTypeId, color, icon, threshold)
-            VALUES (:name, :categoryTypeId, :color, :icon, :threshold)
+            INSERT INTO Category (name, categoryTypeId, color, icon, monthlyBudget)
+            VALUES (:name, :categoryTypeId, :color, :icon, :monthlyBudget)
         """
         
         perform_database_operation(query, params={
@@ -67,7 +67,7 @@ class CategoryRepository:
             "categoryTypeId": categoryTypeId,
             "color": color,
             "icon": icon,
-            "threshold": threshold,
+            "monthlyBudget": monthlyBudget,
         }) 
         
         logger.info("Category '%s' created.", name)
@@ -75,7 +75,7 @@ class CategoryRepository:
 
 
     def update_category(self, id: int, name: str, categoryTypeId: int, 
-                       color: str, icon: str, threshold: float) -> Tuple[bool, str]:
+                       color: str, icon: str, monthlyBudget: float) -> Tuple[bool, str]:
         """Update an existing category."""
         # Check if category exists
         existing = self.get_category_by_id(id)
@@ -89,7 +89,7 @@ class CategoryRepository:
                 categorytypeid = :categoryTypeId,
                 color = :color,
                 icon = :icon,
-                threshold = :threshold
+                monthlyBudget = :monthlyBudget
             WHERE id = :id
         """
         perform_database_operation(query, params={
@@ -98,7 +98,7 @@ class CategoryRepository:
                     "categoryTypeId": categoryTypeId,
                     "color": color,
                     "icon": icon,
-                    "threshold": threshold or 0.0
+                    "monthlyBudget": monthlyBudget or 0.0
         })        
         logger.info("Category '%s' (id=%s) updated.", name, id)
         return True, f"Category '{name}' updated successfully."

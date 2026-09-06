@@ -1,3 +1,5 @@
+import logging
+
 import streamlit as st
 import pandas as pd
 
@@ -5,6 +7,8 @@ from service import FileImporterService
 from service import ClassifierService as classifier
 from src.repository import CategoryRepository
 from src.utils import date as dt
+
+logger = logging.getLogger(__name__)
 
 st.title("📊 Transactions")
 
@@ -38,18 +42,23 @@ if model is None and not df.empty:
     model = classifier.TransactionClassifier()
     st.session_state.model = model
 
-st.sidebar.header("New Transaction")
+if st.session_state.model is not None:
+    # We read description from session_state if it was stored previously;
+    # otherwise default to empty so the first render is safe.
+    _preview_desc = st.session_state.get("_preview_desc", "")
+    suggested = st.session_state.model.classify(_preview_desc).category \
+                if _preview_desc else "Others"
+else:
+    suggested = "Others"
+ 
+categories  = get_categories()
+default_idx = categories.index(suggested) if suggested in categories else 0
 
-def _reset_amount():
-    """Clear the amount input when toggling expense / income."""
-    st.session_state["_amount"] = 0.0
-
-with st.sidebar.form("transaction_form", clear_on_submit=True, enter_to_submit=False):
+with st.form("transaction_form", clear_on_submit=True, enter_to_submit=False):
     transaction_date = st.date_input("Date", value=dt.get_today(), format=dt.DATE_FORMAT_DISPLAY)
     description = st.text_input("Description")
 
-    # NOTE: on_change must be a callable reference, not a call expression
-    is_expense = st.checkbox(label="Is Expense?", value=True, on_change=_reset_amount)
+    is_expense = st.checkbox(label="Is Expense?", value=True)
 
     amount = st.number_input(
         label="Expense Amount" if is_expense else "Income Amount",
@@ -59,13 +68,7 @@ with st.sidebar.form("transaction_form", clear_on_submit=True, enter_to_submit=F
         key="_amount"
     )
     
-    st.session_state.model = model
-    assert st.session_state.model is not None
-    suggested = st.session_state.model.classify(description).category if description else "Others"
-    categories = get_categories()
-    default_idx = categories.index(suggested) if suggested in categories else 0
     category = st.selectbox("Category", categories, index=default_idx)
-
     submitted = st.form_submit_button("Add Transaction")
 
     if submitted:
@@ -77,26 +80,24 @@ with st.sidebar.form("transaction_form", clear_on_submit=True, enter_to_submit=F
             # Compute the new running balance
             current_balance = (df["Income"] - df["Expense"]).sum() if not df.empty else 0.0
             delta = amount if not is_expense else -amount
-            new_accounting = delta
             new_balance = current_balance + delta
 
             new_row = pd.DataFrame([{
-                "Date":                transaction_date.strftime("%d/%m/%Y"),
-                "Date_Value":          transaction_date.strftime("%d/%m/%Y"),
+                "Date":                transaction_date.strftime(dt.DATE_FORMAT_FILE),
+                "Date_Value":          transaction_date.strftime(dt.DATE_FORMAT_DISPLAY ),
                 "Description":         description.strip(),
                 "Expense":             amount if is_expense else 0.0,
                 "Income":              amount if not is_expense else 0.0,
-                "Accounting Balance":  new_accounting,
+                "Accounting Balance":  delta,
                 "Balance":             new_balance,
                 "Category":            category,
             }])
 
-            st.session_state.df = pd.concat(
-                [st.session_state.df, new_row], ignore_index=True
-            )
+            st.session_state.df = pd.concat([st.session_state.df, new_row], ignore_index=True)
             FileImporterService.save_dataframe(st.session_state.df)
 
             # Invalidate model so it retrains with the new transaction
+            st.session_state["_preview_desc"] = description.strip()
             st.session_state.model = None
             st.success("Transaction added successfully!")
             st.rerun()

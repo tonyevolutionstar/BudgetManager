@@ -24,14 +24,14 @@ df["Month"] = df["Date"].dt.to_period("M").astype(str)
 # ── Row 1: KPIs ───────────────────────────────────────────────────────────────
 total_in    = df["Income"].sum()
 total_out   = df["Expense"].sum()
-net         = total_in - total_out
+net         = df["Balance"][0]
 avg_expense = df[df["Expense"] > 0]["Expense"].mean()
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("💰 Total Income",       f"€ {total_in:,.2f}")
 k2.metric("💸 Total Expenses",     f"€ {total_out:,.2f}")
 k3.metric("📈 Net Balance",        f"€ {net:,.2f}",
-          delta="positive" if net >= 0 else "negative")
+          delta="positive" if net >= 0 else "negative", delta_color="inverse" if net < 0 else "normal", delta_arrow = "down" if net < 0 else "up")
 k4.metric("🧾 Average Expense",    f"€ {avg_expense:,.2f}")
 
 st.divider()
@@ -54,7 +54,7 @@ with col1:
     fig.update_layout(barmode="group",
                       xaxis_title="Month", yaxis_title="€",
                       legend_title="Type")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 with col2:
     st.subheader("Cumulative Balance Over Time")
@@ -66,7 +66,7 @@ with col2:
         color_discrete_sequence=["#3498db"],
     )
     fig2.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.5)
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 # ── Row 3: Category breakdown ─────────────────────────────────────────────────
 col3, col4 = st.columns(2)
@@ -87,7 +87,7 @@ with col3:
         color_discrete_sequence=px.colors.qualitative.Set3,
     )
     fig3.update_traces(textposition="inside", textinfo="percent+label")
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width="stretch")
 
 with col4:
     st.subheader("Top 10 Expense Categories")
@@ -100,7 +100,7 @@ with col4:
     )
     fig4.update_layout(yaxis={"categoryorder": "total ascending"},
                        coloraxis_showscale=False)
-    st.plotly_chart(fig4, use_container_width=True)
+    st.plotly_chart(fig4, width="stretch")
 
 # ── Row 4: Budget vs Actual ───────────────────────────────────────────────────
 st.subheader("Budget vs Actual Spending (current month)")
@@ -155,7 +155,7 @@ if repo:
                 xaxis_title="€",
                 legend_title="Legend",
             )
-            st.plotly_chart(fig5, use_container_width=True)
+            st.plotly_chart(fig5, width="stretch")
         else:
             st.info("Set monthly budgets on your categories to see this chart.")
     except Exception as e:
@@ -185,7 +185,7 @@ with col5:
         color_continuous_scale="Blues",
     )
     fig6.update_layout(coloraxis_showscale=False)
-    st.plotly_chart(fig6, use_container_width=True)
+    st.plotly_chart(fig6, width="stretch")
 
 with col6:
     st.subheader("Anomalous Transactions (IQR Method)")
@@ -210,7 +210,7 @@ with col6:
             hover_data=["Description", "Category"],
             labels={"Expense": "€"},
         )
-        st.plotly_chart(fig7, use_container_width=True)
+        st.plotly_chart(fig7, width="stretch")
 
 # ── Row 6: Monthly heatmap ────────────────────────────────────────────────────
 st.subheader("Expense Heatmap — Day × Month")
@@ -230,4 +230,4 @@ fig8 = px.imshow(
     color_continuous_scale="YlOrRd",
     aspect="auto",
 )
-st.plotly_chart(fig8, use_container_width=True)
+st.plotly_chart(fig8, width="stretch")

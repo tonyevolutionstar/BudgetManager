@@ -36,10 +36,7 @@ st.title(":green[:material/money_bag:] Budget Manager")
 st.markdown("Manage your budget effectively by categorizing transactions and visualizing spending patterns.")
 
 today: date = dt.get_today()
-
 df, filter_type, start_date, end_date = dt.date_filter(st.session_state.df)
-if df.empty:
-    st.info("No transactions yet. Use the sidebar to add your first transaction.")
 
 # ---------------------------------------------------------------------------
 # File import
@@ -59,8 +56,7 @@ with st.expander(":material/settings: Import transactions", expanded=True):
     
     if st.button(":material/done_outline: Confirm") and uploaded_file:
         st.session_state.df = FileImporterService.handle_upload_file(uploaded_file, skip_rows=skip_rows, header_row=header_row)
-        st.dataframe(st.session_state.df)
 
 # Transaction History
 st.header("📜 Transaction History")
-st.dataframe(st.session_state.df, use_container_width=True, width='stretch')
+st.dataframe(st.session_state.df,  width='stretch')
