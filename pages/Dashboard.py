@@ -109,11 +109,7 @@ repo = st.session_state.get("categoryRepository")
 if repo:
     try:
         cats = repo.get_all_categories()
-        budgets = {
-            c["name"]: c.get("monthly_budget") or c.get("threshold") or 0
-            for c in cats
-            if c.get("monthly_budget") or c.get("threshold")
-        }
+        budgets = {c["name"]: c["monthlybudget"] for c in cats if c["monthlybudget"]}
         today      = pd.Timestamp.today()
         this_month = df[
             (df["Date"].dt.year  == today.year) &

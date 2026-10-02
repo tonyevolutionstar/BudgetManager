@@ -210,3 +210,6 @@ CREATE TABLE MLTrainingSample (
 );
  
 CREATE INDEX idx_ml_category ON MLTrainingSample (category_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tx_dedupe
+  ON BankTransaction (AccountId, OperationDate, Amount, AccountingBalance, md5(Description));
