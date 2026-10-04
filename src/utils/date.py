@@ -21,7 +21,23 @@ def format_date(d: datetime) -> str:
     """Format a date or datetime as DD/MM/YYYY string."""
     return d.strftime(DATE_FORMAT_FILE)
 
-def apply_date_filter(df: pd.DataFrame, filter_type: str, start_date: date | datetime | None, 
+def parse_dates(series: pd.Series) -> pd.Series:
+    """Parse a Date column to datetime64 without swapping day and month.
+
+    Already-parsed datetimes are returned unchanged. Strings are parsed as
+    DD/MM/YYYY first, then with other day-first formats. Unparseable -> NaT.
+    (pd.to_datetime without dayfirst reads 03/04/2026 as March 4.)
+    """
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series
+    s = series.astype("string").str.strip()
+    parsed = pd.to_datetime(s, format=DATE_FORMAT_FILE, errors="coerce")
+    missing = parsed.isna() & s.notna()
+    if missing.any():
+        parsed.loc[missing] = pd.to_datetime(s[missing], dayfirst=True, errors="coerce", format="mixed")
+    return parsed
+
+def apply_date_filter(df: pd.DataFrame, filter_type: str, start_date: date | datetime | None,
     end_date: date | datetime | None) -> pd.DataFrame:
     """Return a filtered copy of *df* based on the selected filter type.
 
@@ -32,7 +48,7 @@ def apply_date_filter(df: pd.DataFrame, filter_type: str, start_date: date | dat
 
     today   = get_today()
     df_copy = df.copy()
-    df_copy["Date"] = pd.to_datetime(df_copy["Date"], errors="coerce")
+    df_copy["Date"] = parse_dates(df_copy["Date"])
 
     if filter_type == "Today":
         return df_copy[df_copy["Date"].dt.date == today]
@@ -80,6 +96,9 @@ def date_filter(df: pd.DataFrame) -> tuple[pd.DataFrame, str, date, date]:
             end_date = st.date_input(
                 "To", value=today, max_value=today, format=DATE_FORMAT_DISPLAY
             )
+        if start_date > end_date:
+            st.sidebar.error("'From' must be on or before 'To'.")
+            return df.iloc[0:0].copy(), filter_type, start_date, end_date
 
     filtered_df = apply_date_filter(df, filter_type, start_date, end_date)
 

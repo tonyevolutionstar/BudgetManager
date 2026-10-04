@@ -50,7 +50,6 @@ def get_db_connection():
 
     pool_pre_ping avoids "SSL connection closed unexpectedly" errors when
     Neon suspends an idle compute. (kwargs are forwarded to create_engine;
-    verify on your Streamlit version, or set it under [connections.neon].)
     """
     try:
         return st.connection("neon", type="sql", pool_pre_ping=True)

@@ -20,7 +20,6 @@ TYPE_COLS = ["id", "name"]
 SUB_COLS = ["id", "name", "categoryid"]
 TYPE_BADGE_COLORS = {"income": "green", "expense": "red", "transfer": "blue"}
 
-
 # ==================== STATE & DATA ====================
 def load_all_data():
     """Load categories, types and subcategories into session state."""
@@ -80,33 +79,27 @@ def show_flash():
     if pending:
         getattr(st, pending[0])(pending[1])
 
-
 def get_category_type_name(type_id) -> str:
     df = st.session_state.category_types_df
     match = df[df["id"] == type_id]
     return match.iloc[0]["name"] if not match.empty else "Unknown"
-
 
 def get_type_id(type_name: str):
     df = st.session_state.category_types_df
     match = df[df["name"] == type_name]
     return int(match.iloc[0]["id"]) if not match.empty else None
 
-
 def get_category(category_id: int):
     df = st.session_state.categories_df
     match = df[df["id"] == category_id]
     return match.iloc[0] if not match.empty else None
 
-
 def get_subcategories_for_category(category_id) -> list[str]:
     df = st.session_state.sub_categories_df
     return df[df["categoryid"] == category_id]["name"].tolist()
 
-
 init_session_state()
 show_flash()
-
 
 # ==================== DIALOGS ====================
 # Dialogs are opened directly from button clicks (no show_* flags), so they

@@ -1,146 +1,266 @@
-import pdfplumber
-import pandas as pd
-import re
+"""Extract and categorise transactions from PDF bank statements.
+
+Changes vs. the previous version:
+* process_statement() called self._category_stats(), which did not exist
+  (AttributeError at the end of every PDF import). It is defined now.
+* Debit/credit is no longer guessed as "second amount = credit". A typical line
+  is `date date description amount balance`, so the old code turned every
+  balance into a credit. The sign is now resolved from the balance
+  continuity between consecutive lines (and the opening balance), then from
+  explicit markers (-25,50 / "debito"), and only as a last resort assumed
+  (flagged with sign_source == "assumed").
+* The Balance is the bank's balance when the statement has one. The old code
+  recomputed a running total starting at 0 (see result["balance_source"]).
+* Lines must START with a date (headers such as "Extrato de 01/01 a 31/01"
+  are no longer parsed as transactions); the value date is no longer left at
+  the start of the description; wrapped descriptions are joined; opening /
+  closing balance lines are recognised and used to reconcile the statement.
+* Amounts parse both 1.234,56 and 1,234.56 / 1 234,56.
+* Keywords match on word boundaries ('bp' no longer matches 'bpi', 'nos' no
+  longer matches 'mensagens'), accents are ignored, ties between duplicated
+  keywords are gone, and learn_category() ignores stop words.
+* Bank detection prefers the IBAN bank code and no longer uses substrings
+  such as 'nb'.
+* Table fallback: None headers, "mov" matching "movement" as a date, "1.234,56"
+  floats and tables after the first one are handled.
+* CSV / Excel exports neutralise formula injection (cells starting with = + - @).
+* logging instead of print (emoji prints can crash on Windows consoles).
+"""
+from __future__ import annotations
+
 import json
+import logging
+import re
+import unicodedata
 from datetime import datetime
 from typing import Any
 
-class BankStatementExtractor:
-    """
-    Extracts and processes bank statements from PDF files.
-    Automatically categorises transactions using keyword matching.
+import pandas as pd
+import pdfplumber
 
-    Category names are aligned with the main app's category system
-    (see data/categories.py).
+logger = logging.getLogger(__name__)
+
+AMOUNT_TOLERANCE = 0.011   # cents
+MAX_PAGES = 50
+MAX_CONTINUATION_LINES = 2
+
+_DATE = r"\d{2}[/-]\d{2}[/-]\d{4}|\d{4}[/-]\d{2}[/-]\d{2}"
+_LINE_RE = re.compile(rf"^\s*({_DATE})(?:\s+({_DATE}))?\s*(.*)$")
+# 1.234,56 | 1,234.56 | 1 234,56 | 1234,56 | 25,50 (optional sign, optional trailing '-')
+_MONEY_RE = re.compile(r"(?<![\w.,/])[-+]?(?:\d{1,3}(?:[., ]\d{3})+|\d+)[.,]\d{2}-?(?!\w)")
+
+_OPENING_RE = re.compile(r"\b(saldo (anterior|inicial|de abertura)|opening balance|previous balance|balance brought forward)\b")
+_CLOSING_RE = re.compile(r"\b(saldo (final|atual|actual|de fecho)|closing balance|new balance)\b")
+_BALANCE_LINE_RE = re.compile(r"^(saldo|balance|total|transporte|a transportar)\b")
+_HEADER_RE = re.compile(r"\b(saldo|pagina|page|extrato|statement|iban|nib|conta|data|date|descri\w*|debito|credito|total|balance)\b")
+_DEBIT_RE = re.compile(r"\b(debito|debit|expense)\b")
+_CREDIT_RE = re.compile(r"\b(credito|credit|income)\b")
+
+# First four digits of a Portuguese IBAN after "PT50": the bank code. Verify against your own statements.
+_IBAN_BANK_CODES = {
+    "0035": "CGD", "0033": "BCP", "0007": "Novo Banco", "0018": "Santander",
+    "0010": "BPI", "0036": "Montepio", "0045": "Caixa Agricola",
+    "0193": "Banco CTT", "0023": "ActivoBank",
+}
+_BANK_KEYWORDS: list[tuple[str, re.Pattern]] = [
+    ("CGD", re.compile(r"\b(caixa geral de depositos|cgd|caixadirecta)\b")),
+    ("BCP", re.compile(r"\b(millennium bcp|millennium|bcp)\b")),
+    ("Novo Banco", re.compile(r"\bnovo banco\b")),
+    ("Santander", re.compile(r"\bsantander\b")),
+    ("BPI", re.compile(r"\b(banco bpi|bpi)\b")),
+    ("Caixa Agricola", re.compile(r"\b(caixa agricola|credito agricola)\b")),
+    ("Montepio", re.compile(r"\bmontepio\b")),
+    ("ActivoBank", re.compile(r"\bactivobank\b")),
+]
+
+_STOPWORDS = {
+    "compra", "pagamento", "transferencia", "levantamento", "multibanco", "mbway", "debito", "credito",
+    "para", "from", "payment", "purchase", "card", "cartao", "conta", "ref", "referencia",
+}
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+# ---------------------------------------------------------------------------
+# Module helpers
+# ---------------------------------------------------------------------------
+
+def _strip_accents(text: str) -> str:
+    text = unicodedata.normalize("NFD", text)
+    return "".join(c for c in text if unicodedata.category(c) != "Mn")
+
+
+def _norm(text: Any) -> str:
+    """Lowercase, no accents, single spaces."""
+    return re.sub(r"\s+", " ", _strip_accents(str(text or "")).lower()).strip()
+
+
+def _normalise_date(value: str | None) -> str | None:
+    """Return DD/MM/YYYY, or None when the text is not a valid date."""
+    if not value:
+        return None
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(value.strip(), fmt).strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_amount(token: Any) -> float | None:
+    """Parse '1.234,56', '1,234.56', '1 234,56', '-25,50', '25,50-'. None when not a number."""
+    if token is None:
+        return None
+    raw = str(token).strip()
+    negative = raw.startswith("-") or raw.endswith("-")
+    s = re.sub(r"[^\d.,]", "", raw)
+    if not s:
+        return None
+    idx = max(s.rfind("."), s.rfind(","))
+    if idx != -1 and len(s) - idx - 1 == 2:      # last separator followed by 2 digits = decimal separator
+        integer, decimals = re.sub(r"[.,]", "", s[:idx]), s[idx + 1:]
+        s = f"{integer or '0'}.{decimals}"
+    else:
+        s = re.sub(r"[.,]", "", s)
+    try:
+        value = float(s)
+    except ValueError:
+        return None
+    return -value if negative else value
+
+
+def _keyword_pattern(keyword: str) -> re.Pattern:
+    """Word-boundary pattern: short keywords (<=3 chars) must be whole words,
+    longer ones may be a word prefix ('mcdonald' matches 'mcdonalds')."""
+    body = re.escape(keyword)
+    tail = r"(?![a-z0-9])" if len(keyword) <= 3 else ""
+    return re.compile(rf"(?<![a-z0-9]){body}{tail}")
+
+
+def _safe_cell(value: Any) -> Any:
+    """Prefix a quote so Excel/LibreOffice do not evaluate text as a formula."""
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
+def _sanitise_for_export(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "keywords" in df.columns:
+        df["keywords"] = df["keywords"].map(lambda k: ", ".join(k) if isinstance(k, list) else k)
+    for col in df.columns:
+        if pd.api.types.is_string_dtype(df[col]) or df[col].dtype == object:
+            df[col] = df[col].map(_safe_cell)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Extractor
+# ---------------------------------------------------------------------------
+
+class BankStatementExtractor:
+    """Extracts and categorises transactions from a PDF statement (path or file-like object).
+
+    Category names match the categories in DatabaseSchema.sql.
     """
 
     def __init__(self):
-        # Keyword lists per category — aligned with the app's category names
+        # Accent-free, lowercase keywords. Do not list the same keyword in two categories.
         self.categories: dict[str, list[str]] = {
             "Food": [
-                "supermarket", "continente", "pingo doce", "lidl", "aldi", "market",
-                "restaurant", "cafe", "bakery", "auchan", "el corte",
-                "groceries", "grocery", "deli", "butcher", "fishmonger",
-                "froiz", "mercadona", "intermarche",
+                "supermercado", "continente", "pingo doce", "lidl", "aldi", "auchan", "el corte", "minipreco",
+                "intermarche", "mercadona", "froiz", "restaurante", "restaurant", "cafe", "pastelaria",
+                "padaria", "bakery", "talho", "peixaria", "groceries", "grocery", "deli", "butcher",
+                "fishmonger", "mcdonald", "burger king", "kfc", "pizza",
             ],
             "Transportation": [
-                "uber", "bolt", "taxi", "cp", "comboios", "metro", "carris",
-                "transport", "gas station", "galp", "bp", "repsol", "prio", "cepsa",
-                "parking", "toll", "via verde", "scut",
-                "garage", "mechanic", "tires", "service", "maintenance",
+                "uber", "bolt", "taxi", "cp", "comboios", "metro", "carris", "galp", "bp", "repsol", "prio",
+                "cepsa", "gasolina", "gasoleo", "combustivel", "estacionamento", "parking", "portagem",
+                "toll", "via verde", "scut", "garagem", "garage", "oficina", "mecanico", "mechanic",
+                "pneus", "tires",
             ],
             "Housing": [
-                "rent", "condo", "condominium", "electricity", "edp", "endesa",
-                "water", "epal", "indaqua", "gas", "meo", "nos",
-                "vodafone", "internet", "tv", "telephone", "property tax", "imi",
+                "renda", "rent", "condominio", "condominium", "electricity", "edp", "endesa", "agua", "water",
+                "epal", "indaqua", "galp gas", "gas natural", "meo", "nos", "vodafone", "nowo", "internet",
+                "telefone", "telephone", "imi", "property tax",
             ],
             "Healthcare": [
-                "pharmacy", "doctor", "appointment", "hospital", "clinic",
-                "dentist", "nursing", "exams", "lab", "health insurance",
-                "medicare", "advancecare", "multicare",
+                "farmacia", "pharmacy", "medico", "doctor", "consulta", "hospital", "clinica", "clinic",
+                "dentista", "dentist", "enfermagem", "exames", "multicare", "advancecare", "medicare",
             ],
             "Education": [
-                "school", "university", "college", "tuition", "book", "supplies",
-                "course", "training", "workshop", "tutoring", "lessons",
+                "escola", "school", "universidade", "university", "college", "propina", "tuition", "curso",
+                "course", "formacao", "training", "workshop", "explicacoes", "tutoring", "lessons",
             ],
             "Entertainment": [
-                "cinema", "theatre", "concert", "show", "ticket",
-                "netflix", "spotify", "disney", "hbo", "amazon prime", "gaming",
-                "playstation", "xbox", "steam", "game", "bar",
+                "cinema", "teatro", "theatre", "concerto", "concert", "bilhete", "ticket",
+                "playstation", "xbox", "steam", "gaming", "bar", "discoteca", "fnac",
             ],
             "Personal": [
-                "clothing", "shoes", "shirt", "trousers", "dress",
-                "zara", "h&m", "bershka", "pull and bear", "mango", "c&a", "primark",
-                "fashion", "gym", "haircut", "barber",
+                "roupa", "clothing", "sapatos", "shoes", "zara", "h&m", "bershka", "pull and bear", "mango",
+                "c&a", "primark", "fashion", "ginasio", "gym", "fitness", "holmes place", "cabeleireiro",
+                "haircut", "barber", "barbeiro",
             ],
             "Insurance": [
-                "insurance", "bank fee", "commission", "lawyer", "accountant",
-                "cleaning", "electrician", "plumber",
+                "seguro", "insurance", "health insurance", "fidelidade", "allianz", "zurich", "generali",
+                "comissao", "commission", "bank fee", "anuidade", "advogado", "lawyer", "contabilista",
+                "accountant", "limpeza", "eletricista", "canalizador",
             ],
-            "Debt": [
-                "credit card", "loan", "mortgage", "instalment",
-            ],
-            "Savings": [
-                "savings", "deposit", "transfer to savings",
-            ],
-            "Gifts": [
-                "wedding", "birthday", "gift", "souvenir", "toy",
-            ],
+            "Debt": ["cartao de credito", "credit card", "emprestimo", "loan", "hipoteca", "mortgage", "prestacao", "instalment"],
+            "Savings": ["poupanca", "savings", "deposito a prazo", "deposit", "transfer to savings"],
+            "Gifts": ["casamento", "wedding", "aniversario", "birthday", "presente", "gift", "souvenir", "brinquedo", "toy"],
             "Income": [
-                "salary", "wage", "payroll", "transfer in", "refund",
+                "salario", "salary", "vencimento", "ordenado", "wage", "payroll", "subsidio", "reembolso",
+                "refund", "transferencia recebida", "transfer in",
             ],
             "Subscriptions": [
-                "spotify", "apple", "netflix", "youtube premium", "amazon prime",
-                "disney+", "hbo", "subscription",
+                "spotify", "netflix", "disney", "hbo", "amazon prime", "youtube premium", "apple.com", "apple",
+                "subscription", "subscricao", "assinatura",
             ],
-            "Others": [],  # Default / fallback category
+            "Others": [],  # default / fallback
         }
-
-        self._expand_categories()
-
-        # Known bank PDF date-format patterns
-        self.bank_patterns: dict[str, dict] = {
-            "CGD":        {"date_pattern": r"(\d{2}[/-]\d{2}[/-]\d{4})", "encoding": "latin1"},
-            "BCP":        {"date_pattern": r"(\d{4}[/-]\d{2}[/-]\d{2})", "encoding": "utf-8"},
-            "Novo Banco": {"date_pattern": r"(\d{2}[/-]\d{2}[/-]\d{4})", "encoding": "utf-8"},
-            "Santander":  {"date_pattern": r"(\d{2}[/-]\d{2}[/-]\d{4})", "encoding": "latin1"},
-            "BPI":        {"date_pattern": r"(\d{2}[/-]\d{2}[/-]\d{4})", "encoding": "utf-8"},
-        }
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _expand_categories(self):
-        """Add common synonyms/variants to keyword lists."""
-        synonyms: dict[str, list[str]] = {
-            "Food":           ["food", "meal", "dinner", "lunch", "snack"],
-            "Transportation": ["travel", "commute", "journey"],
-            "Housing":        ["home", "house", "dwelling"],
-            "Entertainment":  ["leisure", "fun", "hobby"],
-        }
-        for category, extras in synonyms.items():
-            if category in self.categories:
-                self.categories[category].extend(extras)
-
-    @staticmethod
-    def _parse_amount(value_str: str) -> float:
-        """Convert a localised number string to float."""
-        cleaned = value_str.replace(" ", "").replace(",", ".")
-        cleaned = re.sub(r"[^\d.-]", "", cleaned)
-        try:
-            return float(cleaned)
-        except (ValueError, TypeError):
-            return 0.0
+        self._patterns: dict[str, list[tuple[re.Pattern, str]]] | None = None
 
     # ------------------------------------------------------------------
     # PDF reading
     # ------------------------------------------------------------------
 
-    def _extract_text(self, pdf_path: str) -> str:
-        """Extract raw text from all pages of a PDF."""
-        full_text = ""
+    @staticmethod
+    def _open(source):
+        if hasattr(source, "seek"):
+            source.seek(0)
+        return pdfplumber.open(source)
+
+    def _extract_text(self, source) -> str:
+        """Raw text of the first MAX_PAGES pages ('' on failure)."""
+        parts: list[str] = []
         try:
-            with pdfplumber.open(pdf_path) as pdf:
-                for page in pdf.pages:
+            with self._open(source) as pdf:
+                for page in pdf.pages[:MAX_PAGES]:
                     text = page.extract_text()
                     if text:
-                        full_text += text + "\n"
-        except Exception as exc:
-            print(f"Error reading PDF: {exc}")
-        return full_text
+                        parts.append(text)
+        except Exception:
+            logger.exception("Error reading PDF")
+            return ""
+        return "\n".join(parts)
 
-    def _extract_tables(self, pdf_path: str) -> list[pd.DataFrame]:
-        """Extract tables directly from a PDF."""
-        tables = []
+    def _extract_tables(self, source) -> list[pd.DataFrame]:
+        """Tables found in the PDF, with unique non-null column names."""
+        tables: list[pd.DataFrame] = []
         try:
-            with pdfplumber.open(pdf_path) as pdf:
-                for page in pdf.pages:
+            with self._open(source) as pdf:
+                for page in pdf.pages[:MAX_PAGES]:
                     for table in page.extract_tables():
-                        if table and len(table) > 1:
-                            tables.append(pd.DataFrame(table[1:], columns=table[0]))
-        except Exception as exc:
-            print(f"Error extracting tables: {exc}")
+                        if not table or len(table) < 2:
+                            continue
+                        headers, seen = [], {}
+                        for cell in table[0]:
+                            name = str(cell).strip() if cell is not None else ""
+                            seen[name] = seen.get(name, 0) + 1
+                            headers.append(name if seen[name] == 1 else f"{name}_{seen[name]}")
+                        tables.append(pd.DataFrame(table[1:], columns=headers))
+        except Exception:
+            logger.exception("Error extracting tables")
         return tables
 
     # ------------------------------------------------------------------
@@ -148,17 +268,14 @@ class BankStatementExtractor:
     # ------------------------------------------------------------------
 
     def identify_bank(self, text: str) -> str:
-        """Identify the bank from statement text."""
-        keywords: dict[str, list[str]] = {
-            "CGD":        ["caixa geral", "cgd", "caixadirecta"],
-            "BCP":        ["millennium", "bcp", "millennium bcp"],
-            "Novo Banco": ["novo banco", "nb"],
-            "Santander":  ["santander", "santander totta"],
-            "BPI":        ["bpi", "banco bpi"],
-        }
-        text_lower = text.lower()
-        for bank, words in keywords.items():
-            if any(w in text_lower for w in words):
+        """Identify the bank: IBAN bank code first, then names found in the page header."""
+        match = re.search(r"\bPT\s?\d{2}\s?(\d{4})", text.upper())
+        if match and match.group(1) in _IBAN_BANK_CODES:
+            return _IBAN_BANK_CODES[match.group(1)]
+
+        header = _norm(text[:1500])  # counterparties further down must not decide the bank
+        for bank, pattern in _BANK_KEYWORDS:
+            if pattern.search(header):
                 return bank
         return "Unknown"
 
@@ -166,181 +283,350 @@ class BankStatementExtractor:
     # Categorisation
     # ------------------------------------------------------------------
 
+    def _compiled_patterns(self) -> dict[str, list[tuple[re.Pattern, str]]]:
+        if self._patterns is None:
+            self._patterns = {
+                category: [(_keyword_pattern(_norm(w)), _norm(w)) for w in words if _norm(w)]
+                for category, words in self.categories.items()
+            }
+        return self._patterns
+
     def categorise_transaction(self, description: str) -> dict[str, Any]:
-        """
-        Score each category against the description and return the best match.
+        """Score each category against the description and return the best match.
 
         Returns a dict with keys: category, confidence, keywords.
         """
-        desc_lower = description.lower()
-        scores: dict[str, dict] = {}
+        desc = _norm(description)
+        best: tuple[str, float, list[str]] | None = None
 
-        for category, words in self.categories.items():
-            score = 0.0
-            matched: list[str] = []
-            for word in words:
-                if word in desc_lower:
-                    # Longer (more specific) keywords score higher
-                    score += 1 + len(word) / 10
+        for category, patterns in self._compiled_patterns().items():
+            score, matched = 0.0, []
+            for pattern, word in patterns:
+                if pattern.search(desc):
+                    score += 1 + len(word) / 10   # longer (more specific) keywords score higher
                     matched.append(word)
-            if score > 0:
-                scores[category] = {"score": score, "keywords": matched}
+            if score > 0 and (best is None or score > best[1]):
+                best = (category, score, matched)
 
-        if scores:
-            best = max(scores.items(), key=lambda x: x[1]["score"])
-            return {
-                "category": best[0],
-                "confidence": min(1.0, best[1]["score"] / 5),
-                "keywords": best[1]["keywords"],
-            }
-
+        if best:
+            return {"category": best[0], "confidence": min(1.0, best[1] / 5), "keywords": best[2]}
         return {"category": "Others", "confidence": 0.3, "keywords": []}
 
-    def learn_category(self, description: str, correct_category: str):
-        """
-        Allow manual correction of a category so the extractor improves
-        over time within the same session.
-        """
-        if correct_category not in self.categories:
-            self.categories[correct_category] = []
+    def learn_category(self, description: str, correct_category: str) -> None:
+        """Teach the extractor from a manual correction (this session only).
 
-        words = re.findall(r"\b[a-záàâãçéêíóôõúü]{3,}\b", description.lower())
-        for word in words:
-            if word not in self.categories[correct_category]:
+        Only meaningful words are added (>= 4 letters, not generic stop words).
+        """
+        self.categories.setdefault(correct_category, [])
+        for word in re.findall(r"[a-z]{4,}", _norm(description)):
+            if word not in _STOPWORDS and word not in self.categories[correct_category]:
                 self.categories[correct_category].append(word)
-
-        print(f"✅ Learned: '{description[:50]}' → {correct_category}")
+        self._patterns = None
+        logger.info("Learned a correction for category '%s'.", correct_category)
 
     # ------------------------------------------------------------------
-    # Transaction extraction
+    # Text parsing
     # ------------------------------------------------------------------
 
-    def _extract_transactions_regex(self, text: str) -> list[dict]:
-        """Parse transactions from raw text using regex heuristics."""
-        transactions: list[dict] = []
-        date_pattern = r"(\d{2}[/-]\d{2}[/-]\d{4})"
-        amount_pattern = r"(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})"
+    def _parse_rest(self, rest: str) -> dict | None:
+        """Parse what follows the date(s): description, amount(s) and balance."""
+        values: list[tuple[float, str]] = []
+        spans: list[tuple[int, int]] = []
+        for m in _MONEY_RE.finditer(rest):
+            amount = _parse_amount(m.group(0))
+            if amount is not None:
+                values.append((amount, m.group(0)))
+                spans.append(m.span())
+        if not values:
+            return None
+
+        description, last = "", 0
+        for start, end in spans:
+            description += rest[last:start]
+            last = end
+        description = re.sub(r"\s+", " ", description + rest[last:]).strip(" -;,")
+        if not description:
+            return None
+
+        first_token = values[0][1]
+        marker = -1 if first_token.startswith("-") or first_token.endswith("-") else (1 if first_token.startswith("+") else None)
+        if marker is None:
+            norm_rest = _norm(rest)
+            marker = -1 if _DEBIT_RE.search(norm_rest) else (1 if _CREDIT_RE.search(norm_rest) else None)
+
+        nums = [v for v, _ in values]
+        row: dict[str, Any] = {
+            "description": description, "balance": None, "amount": None,
+            "debit": 0.0, "credit": 0.0, "sign": marker,
+            "sign_source": "marker" if marker is not None else None, "cont": 0,
+        }
+        if len(nums) == 1:                         # amount only
+            row["amount"] = abs(nums[0])
+        elif len(nums) == 2:                       # amount, balance
+            row["amount"], row["balance"] = abs(nums[0]), nums[1]
+        else:                                      # debit, credit, ..., balance
+            debit, credit = abs(nums[0]), abs(nums[1])
+            row["balance"] = nums[-1]
+            row["debit"], row["credit"] = debit, credit
+            row["amount"] = abs(credit - debit) if debit and credit else (debit or credit)
+            row["sign"] = 0 if (debit and credit) else (1 if credit else -1)
+            row["sign_source"] = "columns"
+        return row
+
+    @staticmethod
+    def _is_continuation(line: str) -> bool:
+        stripped = line.strip()
+        return (
+            0 < len(stripped) <= 60
+            and not _MONEY_RE.search(stripped)
+            and not _HEADER_RE.search(_norm(stripped))
+            and not stripped.isdigit()
+        )
+
+    def _parse_text(self, text: str) -> tuple[list[dict], float | None, float | None]:
+        """Return (rows, opening_balance, closing_balance)."""
+        rows: list[dict] = []
+        opening = closing = None
+        last_was_row = False
 
         for line in text.split("\n"):
-            date_match = re.search(date_pattern, line)
-            if not date_match:
+            norm_line = _norm(line)
+            money = _MONEY_RE.findall(line)
+
+            if money and _OPENING_RE.search(norm_line):
+                opening = _parse_amount(money[-1])
+                last_was_row = False
+                continue
+            if money and _CLOSING_RE.search(norm_line):
+                closing = _parse_amount(money[-1])
+                last_was_row = False
                 continue
 
-            amounts = re.findall(amount_pattern, line)
-            description = line[date_match.end():].strip()
-
-            debit = credit = 0.0
-
-            if amounts:
-                for amt in amounts:
-                    description = description.replace(amt, "").strip()
-
-                if len(amounts) == 1:
-                    if re.search(r"\bdebit\b|\bexpense\b|\bdébito\b", line, re.I):
-                        debit = self._parse_amount(amounts[0])
-                    else:
-                        credit = self._parse_amount(amounts[0])
+            match = _LINE_RE.match(line)
+            if not match:
+                if last_was_row and rows and rows[-1]["cont"] < MAX_CONTINUATION_LINES and self._is_continuation(line):
+                    rows[-1]["description"] += " " + line.strip()
+                    rows[-1]["cont"] += 1
                 else:
-                    debit = self._parse_amount(amounts[0])
-                    credit = self._parse_amount(amounts[1])
+                    last_was_row = False
+                continue
 
-            if description and (debit > 0 or credit > 0):
-                cat_info = self.categorise_transaction(description)
-                transactions.append({
-                    "date": date_match.group(1),
-                    "description": description,
-                    "debit": debit,
-                    "credit": credit,
-                    "balance": 0.0,
-                    "category": cat_info["category"],
-                    "category_confidence": cat_info["confidence"],
-                    "keywords": cat_info["keywords"],
-                })
+            last_was_row = False
+            date = _normalise_date(match.group(1))
+            if date is None:
+                continue
+            rest = match.group(3)
+            if _BALANCE_LINE_RE.match(_norm(rest)):
+                continue
+            row = self._parse_rest(rest)
+            if row is None:
+                continue
+            row["date"] = date
+            row["value_date"] = _normalise_date(match.group(2)) or date
+            rows.append(row)
+            last_was_row = True
 
+        return rows, opening, closing
+
+    # ------------------------------------------------------------------
+    # Sign resolution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_order(rows: list[dict], opening: float | None) -> str | None:
+        """'asc' (oldest first) or 'desc', judged by which one the balances support."""
+        asc = desc = 0
+        for prev, cur in zip(rows, rows[1:]):
+            if prev["balance"] is None or cur["balance"] is None:
+                continue
+            diff = abs(cur["balance"] - prev["balance"])
+            if cur["amount"] is not None and abs(diff - cur["amount"]) <= AMOUNT_TOLERANCE:
+                asc += 1
+            if prev["amount"] is not None and abs(diff - prev["amount"]) <= AMOUNT_TOLERANCE:
+                desc += 1
+        if opening is not None and rows:
+            first, last = rows[0], rows[-1]
+            if first["balance"] is not None and first["amount"] is not None \
+                    and abs(abs(first["balance"] - opening) - first["amount"]) <= AMOUNT_TOLERANCE:
+                asc += 1
+            if last["balance"] is not None and last["amount"] is not None \
+                    and abs(abs(last["balance"] - opening) - last["amount"]) <= AMOUNT_TOLERANCE:
+                desc += 1
+        if asc == desc == 0:
+            return None
+        return "asc" if asc >= desc else "desc"
+
+    @staticmethod
+    def _resolve_signs(rows: list[dict], opening: float | None, order: str | None) -> None:
+        """Fill row['sign'] from the balance before each row (the next row when newest-first)."""
+        last = len(rows) - 1
+        for i, row in enumerate(rows):
+            if row["sign"] is not None or row["amount"] is None or row["balance"] is None:
+                continue
+            if order == "asc":
+                before = rows[i - 1]["balance"] if i > 0 else opening
+            elif order == "desc":
+                before = rows[i + 1]["balance"] if i < last else opening
+            else:
+                before = None
+            if before is None:
+                continue
+            delta = row["balance"] - before
+            if delta != 0 and abs(abs(delta) - row["amount"]) <= AMOUNT_TOLERANCE:
+                row["sign"] = 1 if delta > 0 else -1
+                row["sign_source"] = "balance"
+
+    def _build_transactions(self, rows: list[dict], opening: float | None, order: str | None) -> list[dict]:
+        self._resolve_signs(rows, opening, order)
+        transactions: list[dict] = []
+        for row in rows:
+            cat = self.categorise_transaction(row["description"])
+            sign, source = row["sign"], row["sign_source"]
+            if sign is None:                       # last resort: guess, and flag it for review
+                sign = 1 if cat["category"] == "Income" else -1
+                source = "assumed"
+            if sign == 0:                          # explicit debit and credit columns
+                debit, credit = row["debit"], row["credit"]
+            else:
+                debit = row["amount"] if sign < 0 else 0.0
+                credit = row["amount"] if sign > 0 else 0.0
+            transactions.append({
+                "date": row["date"],
+                "value_date": row["value_date"],
+                "description": row["description"],
+                "debit": debit,
+                "credit": credit,
+                "balance": row["balance"],
+                "category": cat["category"],
+                "category_confidence": cat["confidence"],
+                "keywords": cat["keywords"],
+                "sign_source": source,
+            })
         return transactions
 
+    # ------------------------------------------------------------------
+    # Table fallback
+    # ------------------------------------------------------------------
+
     def _table_to_transactions(self, df: pd.DataFrame) -> list[dict]:
-        """Convert a pdfplumber table DataFrame into a transaction list."""
+        """Convert a pdfplumber table into transactions (headers matched ignoring accents/case)."""
+        headers = [_norm(c) for c in df.columns]
+        idx: dict[str, int] = {}
+        for i, h in enumerate(headers):
+            if "data" in h or "date" in h:
+                idx.setdefault("date", i)        # the first date column is the operation date
+            elif any(k in h for k in ("descri", "movimento", "text", "detalhe")):
+                idx.setdefault("desc", i)
+            elif any(k in h for k in ("debito", "debit", "expense", "saida", "despesa")):
+                idx.setdefault("debit", i)
+            elif any(k in h for k in ("credito", "credit", "income", "receita", "entrada")):
+                idx.setdefault("credit", i)
+            elif any(k in h for k in ("saldo", "balance")):
+                idx.setdefault("balance", i)
+            elif any(k in h for k in ("valor", "montante", "amount")):
+                idx.setdefault("amount", i)
+
+        if "date" not in idx or "desc" not in idx or not ({"debit", "credit", "amount"} & idx.keys()):
+            return []
+
+        def cell(row: pd.Series, key: str) -> float | None:
+            return _parse_amount(row.iloc[idx[key]]) if key in idx else None
+
         transactions: list[dict] = []
-        cols = {col.lower(): col for col in df.columns}
-
-        col_date = col_desc = col_debit = col_credit = None
-
-        for col_lower, col_orig in cols.items():
-            if any(p in col_lower for p in ("date", "mov", "data")):
-                col_date = col_orig
-            elif any(p in col_lower for p in ("descri", "description", "text", "movement")):
-                col_desc = col_orig
-            elif any(p in col_lower for p in ("debit", "expense", "debt")):
-                col_debit = col_orig
-            elif any(p in col_lower for p in ("credit", "income", "receita")):
-                col_credit = col_orig
-
-        if not col_date:
-            return transactions
-
         for _, row in df.iterrows():
-            description = str(row[col_desc]) if col_desc and pd.notna(row[col_desc]) else ""
-            if not description or description == "nan":
+            date = _normalise_date(str(row.iloc[idx["date"]] or "").strip())
+            description = re.sub(r"\s+", " ", str(row.iloc[idx["desc"]] or "")).strip()
+            if not date or not description:
                 continue
 
-            cat_info = self.categorise_transaction(description)
-            debit = float(row[col_debit]) if col_debit and pd.notna(row[col_debit]) else 0.0
-            credit = float(row[col_credit]) if col_credit and pd.notna(row[col_credit]) else 0.0
+            debit = abs(cell(row, "debit") or 0.0)
+            credit = abs(cell(row, "credit") or 0.0)
+            signed = cell(row, "amount")
+            if signed is not None and not (debit or credit):
+                debit, credit = (0.0, signed) if signed > 0 else (-signed, 0.0)
+            if not (debit or credit):
+                continue
 
-            if debit > 0 or credit > 0:
-                transactions.append({
-                    "date": str(row[col_date]) if pd.notna(row[col_date]) else "",
-                    "description": description,
-                    "debit": debit,
-                    "credit": credit,
-                    "balance": 0.0,
-                    "category": cat_info["category"],
-                    "category_confidence": cat_info["confidence"],
-                    "keywords": cat_info["keywords"],
-                })
-
+            cat = self.categorise_transaction(description)
+            transactions.append({
+                "date": date, "value_date": date, "description": description,
+                "debit": debit, "credit": credit, "balance": cell(row, "balance"),
+                "category": cat["category"], "category_confidence": cat["confidence"],
+                "keywords": cat["keywords"], "sign_source": "columns",
+            })
         return transactions
 
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
-    def process_statement(self, pdf_path: str) -> dict[str, Any]:
+    @staticmethod
+    def _category_stats(transactions: list[dict]) -> dict[str, dict[str, float]]:
+        stats: dict[str, dict[str, float]] = {}
+        for t in transactions:
+            entry = stats.setdefault(t["category"], {"count": 0, "debits": 0.0, "credits": 0.0})
+            entry["count"] += 1
+            entry["debits"] = round(entry["debits"] + t["debit"], 2)
+            entry["credits"] = round(entry["credits"] + t["credit"], 2)
+        return stats
+
+    def process_statement(self, pdf_path) -> dict[str, Any]:
+        """Process a PDF statement (file path or file-like object) end to end.
+
+        Returns a result dict, or {'error': message} on failure. Besides the
+        transactions, the result reports balance_source ('statement' | 'computed'),
+        reconciled (opening + movements == closing, or None) and needs_review
+        (number of rows whose sign had to be assumed).
         """
-        Process a PDF bank statement end-to-end.
-        Returns a result dict or a dict with key 'error' on failure.
-        """
-        print(f"📄 Processing: {pdf_path}")
+        logger.info("Processing statement")
 
         text = self._extract_text(pdf_path)
-        if not text:
-            return {"error": "Could not extract text from PDF."}
+        if not text.strip():
+            return {"error": "Could not extract text from the PDF (scanned PDFs are not supported)."}
 
         bank = self.identify_bank(text)
-        print(f"🏦 Bank identified: {bank}")
-
-        transactions = self._extract_transactions_regex(text)
+        rows, opening, closing = self._parse_text(text)
+        order = self._detect_order(rows, opening) if rows else None
+        transactions = self._build_transactions(rows, opening, order) if rows else []
 
         if not transactions:
-            print("Trying table extraction...")
-            tables = self._extract_tables(pdf_path)
-            if tables:
-                transactions = self._table_to_transactions(tables[0])
+            for table in self._extract_tables(pdf_path):
+                transactions.extend(self._table_to_transactions(table))
+            order = None
 
-        # Compute running balance
-        running = 0.0
-        for t in transactions:
-            running += t["credit"] - t["debit"]
-            t["balance"] = running
+        net_change = round(sum(t["credit"] - t["debit"] for t in transactions), 2)
+
+        if transactions and all(t["balance"] is not None for t in transactions):
+            balance_source = "statement"
+            if order == "asc":
+                final_balance = transactions[-1]["balance"]
+            elif order == "desc":
+                final_balance = transactions[0]["balance"]
+            else:
+                final_balance = closing if closing is not None else net_change
+        else:
+            balance_source = "computed"                # running total of the imported rows, starting at 0
+            running = 0.0
+            for t in transactions:
+                running += t["credit"] - t["debit"]
+                t["balance"] = round(running, 2)
+            final_balance = net_change
+
+        reconciled = None
+        if opening is not None and closing is not None and transactions:
+            reconciled = abs(opening + net_change - closing) <= 0.02
 
         return {
             "bank": bank,
             "processed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "total_transactions": len(transactions),
-            "total_debits": sum(t["debit"] for t in transactions),
-            "total_credits": sum(t["credit"] for t in transactions),
-            "final_balance": sum(t["credit"] - t["debit"] for t in transactions),
+            "total_debits": round(sum(t["debit"] for t in transactions), 2),
+            "total_credits": round(sum(t["credit"] for t in transactions), 2),
+            "net_change": net_change,
+            "final_balance": final_balance,
+            "balance_source": balance_source,
+            "reconciled": reconciled,
+            "needs_review": sum(1 for t in transactions if t["sign_source"] == "assumed"),
             "category_stats": self._category_stats(transactions),
             "transactions": transactions,
         }
@@ -349,44 +635,45 @@ class BankStatementExtractor:
     # Export helpers
     # ------------------------------------------------------------------
 
-    def export_csv(self, result: dict, output_path: str):
-        """Export transactions to CSV."""
+    def export_csv(self, result: dict, output_path: str) -> None:
+        """Export transactions to CSV (formula-injection safe)."""
         if result.get("transactions"):
-            pd.DataFrame(result["transactions"]).to_csv(
+            _sanitise_for_export(pd.DataFrame(result["transactions"])).to_csv(
                 output_path, index=False, encoding="utf-8-sig"
             )
-            print(f"✅ CSV exported: {output_path}")
+            logger.info("CSV exported: %s", output_path)
         else:
-            print("⚠️ No transactions to export.")
+            logger.warning("No transactions to export.")
 
-    def export_json(self, result: dict, output_path: str):
-        """Export full result to JSON."""
+    def export_json(self, result: dict, output_path: str) -> None:
+        """Export the full result to JSON."""
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False, default=str)
-        print(f"✅ JSON exported: {output_path}")
+        logger.info("JSON exported: %s", output_path)
 
-    def export_excel(self, result: dict, output_path: str):
-        """Export result to an Excel workbook with multiple sheets."""
+    def export_excel(self, result: dict, output_path: str) -> None:
+        """Export to an Excel workbook with Transactions / Summary / Stats sheets (formula-injection safe)."""
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             if result.get("transactions"):
-                pd.DataFrame(result["transactions"]).to_excel(
+                _sanitise_for_export(pd.DataFrame(result["transactions"])).to_excel(
                     writer, sheet_name="Transactions", index=False
                 )
 
-            pd.DataFrame([{
+            _sanitise_for_export(pd.DataFrame([{
                 "Bank": result["bank"],
                 "Processed At": result["processed_at"],
                 "Total Transactions": result["total_transactions"],
                 "Total Debits": result["total_debits"],
                 "Total Credits": result["total_credits"],
+                "Net Change": result["net_change"],
                 "Final Balance": result["final_balance"],
-            }]).to_excel(writer, sheet_name="Summary", index=False)
+                "Balance Source": result["balance_source"],
+            }])).to_excel(writer, sheet_name="Summary", index=False)
 
             if result.get("category_stats"):
                 (
-                    pd.DataFrame(result["category_stats"])
-                    .T.reset_index()
-                    .rename(columns={"index": "Category"})
-                    .to_excel(writer, sheet_name="Stats", index=False)
+                    _sanitise_for_export(
+                        pd.DataFrame(result["category_stats"]).T.reset_index().rename(columns={"index": "Category"})
+                    ).to_excel(writer, sheet_name="Stats", index=False)
                 )
-        print(f"✅ Excel exported: {output_path}")
+        logger.info("Excel exported: %s", output_path)

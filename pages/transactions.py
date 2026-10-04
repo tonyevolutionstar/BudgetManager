@@ -3,6 +3,7 @@ import logging
 import streamlit as st
 import pandas as pd
 
+from data.database import DatabaseError
 from service import FileImporterService
 from service import ClassifierService as classifier
 from src.repository import CategoryRepository
@@ -11,6 +12,9 @@ from src.utils import date as dt
 logger = logging.getLogger(__name__)
 
 st.title("📊 Transactions")
+
+CSV_COLUMNS = FileImporterService.CSV_COLUMNS
+MAX_AMOUNT = 1_000_000_000.0
 
 # Guard: ensure shared state exists before anything else
 if "df" not in st.session_state:
@@ -22,21 +26,23 @@ if "model" not in st.session_state:
 df: pd.DataFrame = st.session_state.df
 model = st.session_state.model
 
-def get_categories():
+# ==================== DATA HELPERS ====================
+@st.cache_data(ttl=60)
+def _load_category_names() -> list[str]:
+    """Category names from the DB, cached for a minute so typing doesn't query on every rerun.
+    Exceptions are not cached, so a failed lookup is retried on the next rerun."""
+    categories = CategoryRepository().get_all_categories()
+    return [c["name"] for c in categories if c.get("name")]
+
+def get_categories() -> list[str]:
     """Return category names from the DB, falling back to ['Others']."""
-    if "categoryRepository" not in st.session_state or st.session_state.categoryRepository is None:
-        st.session_state.categoryRepository = CategoryRepository()
-
     try:
-        categories = st.session_state.categoryRepository.get_all_categories()
-        if categories:
-            names = [c.get('name') for c in categories if c.get('name')]
-            if names:
-                return names
-    except Exception as e:
-        st.error(f"Error fetching categories: {e}")
-
-    return ['Others']
+        names = _load_category_names()
+        if names:
+            return names
+    except DatabaseError as e:
+        st.error(str(e))
+    return ["Others"]
 
 if model is None and not df.empty:
     model = classifier.TransactionClassifier()
@@ -84,7 +90,6 @@ with st.form("transaction_form", clear_on_submit=True, enter_to_submit=False):
 
             new_row = pd.DataFrame([{
                 "Date":                transaction_date.strftime(dt.DATE_FORMAT_FILE),
-                "Date_Value":          transaction_date.strftime(dt.DATE_FORMAT_DISPLAY ),
                 "Description":         description.strip(),
                 "Expense":             amount if is_expense else 0.0,
                 "Income":              amount if not is_expense else 0.0,
@@ -111,4 +116,4 @@ current_df = st.session_state.df
 if current_df.empty:
     st.info("No transactions yet. Use the sidebar to add one.")
 else:
-    st.dataframe(current_df, use_container_width=True)
+    st.dataframe(current_df, width='stretch')

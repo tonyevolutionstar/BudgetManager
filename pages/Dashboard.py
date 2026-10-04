@@ -5,27 +5,71 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from data.database import DatabaseError
+from pages.Transactions import CSV_COLUMNS
+from src.repository import CategoryRepository
+from src.utils import date as dt
+
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
+
 st.title("📊 Financial Dashboard")
+
+REQUIRED_COLUMNS = {"Date", "Description", "Expense", "Income", "Category"}
+DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+@st.cache_data(ttl=60)
+def load_budgets() -> dict[str, float]:
+    """Monthly budget per category name (only categories with a budget > 0)."""
+    return {
+        c["name"]: c["monthlybudget"]
+        for c in CategoryRepository().get_all_categories()
+        if c["monthlybudget"] and c["monthlybudget"] > 0
+    }
 
 df: pd.DataFrame = st.session_state.get("df", pd.DataFrame())
 
-if df.empty:
+if df is None or df.empty or not REQUIRED_COLUMNS <= set(df.columns):
     st.info("No transactions available. Import a bank statement to see your charts.")
     st.stop()
 
-# ── Common preparation ────────────────────────────────────────────────────────
 df = df.copy()
-df["Date"]  = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+df["Date"] = dt.parse_dates(df["Date"])                    # never swaps day and month
+df = df.dropna(subset=["Date"])
+for col in ("Expense", "Income"):
+    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+df["Category"] = df["Category"].fillna("Others").astype(str)
+
+if df.empty:
+    st.info("No transactions with a valid date.")
+    st.stop()
+
+# ── Period filter ─────────────────────────────────────────────────────────────
+min_date, max_date = df["Date"].min().date(), df["Date"].max().date()
+st.sidebar.header("📅 Period")
+period = st.sidebar.date_input(
+    "Date range", value=(min_date, max_date),
+    min_value=min_date, max_value=max_date, format=dt.DATE_FORMAT_DISPLAY,
+)
+if not (isinstance(period, tuple) and len(period) == 2):
+    st.sidebar.info("Select an end date.")
+    st.stop()
+ 
+start, end = period
+df = df[(df["Date"].dt.date >= start) & (df["Date"].dt.date <= end)]
+if df.empty:
+    st.info("No transactions in this period.")
+    st.stop()
+ 
 df["Month"] = df["Date"].dt.to_period("M").astype(str)
 
 # ── Row 1: KPIs ───────────────────────────────────────────────────────────────
-total_in    = df["Income"].sum()
-total_out   = df["Expense"].sum()
-net         = df["Balance"][0]
-avg_expense = df[df["Expense"] > 0]["Expense"].mean()
+total_in  = df["Income"].sum()
+total_out = df["Expense"].sum()
+net = total_in - total_out
+expenses_only = df.loc[df["Expense"] > 0, "Expense"]
+avg_expense = expenses_only.mean() if not expenses_only.empty else 0.0
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("💰 Total Income",       f"€ {total_in:,.2f}")

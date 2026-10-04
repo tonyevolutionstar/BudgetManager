@@ -18,7 +18,6 @@ MAX_NAME = 100            # Category.NAME varchar(100)
 MAX_ICON = 10             # Category.icon varchar(10)
 MAX_BUDGET = 99_999_999.99  # Category.MonthlyBudget NUMERIC(10, 2)
 
-
 def _validate(name: str, color: str | None, icon: str | None, monthly_budget: float | None) -> str | None:
     """Return an error message, or None when the input is valid."""
     if not name or not name.strip():
