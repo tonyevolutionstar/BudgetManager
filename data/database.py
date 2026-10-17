@@ -32,7 +32,7 @@ def _to_native(value: Any) -> Any:
         value = value.item()
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
-    if isinstance(value, float) and value != value:  # NaN -> NULL
+    if isinstance(value, float): 
         return None
     return value
 
@@ -40,6 +40,13 @@ def _to_native(value: Any) -> Any:
 def _sanitise_params(params: dict | None) -> dict:
     return {key: _to_native(val) for key, val in (params or {}).items()}
 
+def to_records(df: pd.DataFrame) -> list[dict]:
+    """DataFrame -> list of dicts with native Python values; NaN / NaT / NA become None.
+ 
+    DataFrame.to_dict() yields float NaN for NULL, which is truthy in Python
+    (`row["icon"] or default` would keep the NaN) and renders as 'nan'.
+    """
+    return df.astype(object).where(df.notna(), None).to_dict(orient="records")
 
 # ---------------------------------------------------------------------------
 # Connection
@@ -83,20 +90,20 @@ def execute_statements(statements: Sequence[tuple[str, dict | None]]) -> list[in
     is committed.
     """
     conn = get_db_connection()
-    rowcounts: list[int] = []
+    rowcounts = []
     try:
         with conn.session as session:
             for query, params in statements:
                 result = session.execute(text(query), _sanitise_params(params))
-                rowcounts.append(result.rowcount)
+                rowcounts.append(int(getattr(result, "rowcount", 0) or 0))
             session.commit()
-        return rowcounts
     except IntegrityError as exc:
         logger.warning("Integrity violation: %s", exc.orig)
         raise IntegrityViolation("The operation violates a database constraint.") from exc
     except Exception as exc:
         logger.exception("Database operation error")
         raise DatabaseError("The database operation failed.") from exc
+    return rowcounts
 
 
 def perform_database_operation(query: str, params: dict | None = None) -> int:

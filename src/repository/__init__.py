@@ -1,10 +1,13 @@
+from src.repository.bankTransactionRepository import BankTransactionRepository
 from src.repository.categoryRepository import CategoryRepository
 from src.repository.categoryTypeRepository import CategoryTypeRepository
+from src.repository.mlTrainingSampleRepository import MLTrainingSampleRepository
 from src.repository.subCategoryRepository import SubCategoryRepository
-from src.repository.bankTransactionRepository import BankTransactionRepository
 
 __all__ = [
+    'BankTransactionRepository',
     'CategoryRepository',
-    'CategoryTypeRepository', 
-    'SubCategoryRepository', 
-    'BankTransactionRepository']
+    'CategoryTypeRepository',
+    'MLTrainingSampleRepository',
+    'SubCategoryRepository',
+]

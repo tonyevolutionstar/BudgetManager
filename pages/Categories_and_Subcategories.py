@@ -4,23 +4,18 @@ import streamlit as st
 from data.database import DatabaseError
 from src.repository import CategoryRepository, CategoryTypeRepository, SubCategoryRepository
 
-# Page config must be the very first Streamlit call
 st.set_page_config(
     page_title="Categories and Subcategories",
-    page_icon="📊",
+    page_icon="🏷️",
     layout="wide",
     initial_sidebar_state="auto",
 )
 
-st.title("📊 Categories and Subcategories")
-
-# PostgreSQL returns lowercase column names
 CATEGORY_COLS = ["id", "name", "categorytypeid", "color", "icon", "monthlybudget"]
 TYPE_COLS = ["id", "name"]
 SUB_COLS = ["id", "name", "categoryid"]
 TYPE_BADGE_COLORS = {"income": "green", "expense": "red", "transfer": "blue"}
 
-# ==================== STATE & DATA ====================
 def load_all_data():
     """Load categories, types and subcategories into session state."""
     ss = st.session_state
@@ -34,7 +29,6 @@ def load_all_data():
         ss.categories_df = pd.DataFrame(columns=CATEGORY_COLS)
         ss.category_types_df = pd.DataFrame(columns=TYPE_COLS)
         ss.sub_categories_df = pd.DataFrame(columns=SUB_COLS)
-
 
 def init_session_state():
     ss = st.session_state
@@ -62,17 +56,14 @@ def init_session_state():
     if not ss.categories_initialized:
         load_all_data()
 
-
 def refresh_data():
     """Reload from the database and rerun (this also closes any open dialog)."""
     load_all_data()
     st.rerun()
 
-
 def flash(kind: str, message: str):
     """Show a message after the next rerun (a dialog's own messages vanish when it closes)."""
     st.session_state.flash = (kind, message)
-
 
 def show_flash():
     pending = st.session_state.pop("flash", None)
@@ -142,7 +133,6 @@ def create_category_dialog():
             refresh_data()
         else:
             st.error(message)
-
 
 @st.dialog("✏️ Update Category")
 def update_category_dialog(category_id: int):

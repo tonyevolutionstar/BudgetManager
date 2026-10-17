@@ -18,17 +18,31 @@ Run `data/DatabaseSchema.sql` against your PostgreSQL database. It is safe to ru
 (it never drops anything). `data/ResetDatabase.sql` wipes everything.
 If your database was created with the **old** schema, run `data/migrations/002_existing_database_hardening.sql` once.
 
-### Login
-
-Every page calls `require_login()` (`src/utils/auth.py`) and **fails closed**: without an `[auth]`
-section in `secrets.toml` the app refuses to show anything. For local development only, set
-`allow_anonymous = true` under `[app]`. Restrict access with `allowed_emails`.
-
 ## Run
 
 ```bash
 uv run streamlit run Home.py
 ```
+
+## Automatic categories
+
+For each transaction the app looks for evidence, in this order:
+1. **learned**: the same description (ignoring digits, dates, punctuation and accents) was categorised by you before;
+2. **keywords**: `categories` in `data/bankStatementExtractor.py`;
+3. **ml**: a model trained on your stored corrections (needs 20+ samples in 2+ categories), only for rows no keyword matched;
+4. otherwise an existing category of yours is kept, or the row becomes "Others".
+
+* **Home → Import**: "Categorise automatically after import" (on by default).
+* **Home → Automatic categories**: preview, correct any suggestion, then **Apply categories**.
+  "Uncategorised only" keeps categories you set yourself; "All transactions" re-evaluates every row.
+* **Home → Learned corrections**: review what was learned and forget any entry.
+* **Dashboard**: a banner with a one-click button while some transactions still use non-app categories.
+* **Transactions**: the category you choose for a manual entry is learned too.
+
+Learning is stored in the `MLTrainingSample` table: your corrections (`manual`) and the suggestions you accept
+(`confirmed_rule` / `confirmed_ml`). Automatic runs (after an import, the Dashboard button) are never saved.
+Changes to the transactions live in the session, not in a file or the database.
+Existing database? Run `data/migrations/003_ml_training_sample_unique.sql` once.
 
 ## Data and privacy
 
@@ -45,9 +59,3 @@ uv run streamlit run Home.py
 | `data/` | `database.py`, SQL schema/migrations, `bankStatementExtractor.py` |
 | `src/repository/` | Database access (one class per table group) |
 | `src/utils/` | Date helpers, login gate |
-
-## Tests
-
-```bash
-uv run pytest
-```

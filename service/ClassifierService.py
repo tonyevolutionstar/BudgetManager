@@ -1,23 +1,3 @@
-"""Hybrid transaction classifier: DB rules -> ML model -> keywords -> 'Others'.
-
-Changes vs. the previous version:
-* LogisticRegression(multi_class=...) removed: the argument no longer exists in
-  scikit-learn 1.8+ and raised TypeError. multinomial is already the default.
-* The ML model is only trained when the samples contain at least 2 categories
-  (a single class makes LogisticRegression raise ValueError).
-* Rule regexes are no longer passed through _normalise(), which lowercased
-  them and turned \\D into \\d, \\S into \\s, etc. Pattern/description lengths
-  are capped to limit ReDoS risk, and compiled regexes are cached.
-* Rules accept PostgreSQL's lowercase column names (pattern, matchtype, ...).
-* KEYWORD_MAP uses the category / subcategory names that exist in the database
-  (DatabaseSchema.sql), so suggestions no longer silently fall back to the first
-  category in the selectbox.
-* Keywords match on word boundaries ('meo' no longer matches 'homeopatia',
-  'bp' no longer matches 'bpi').
-* The correction widget accepts a stable key (hash(desc) collided on duplicate
-  descriptions and is randomised per process).
-* Descriptions are no longer written to the logs.
-"""
 from __future__ import annotations
 
 import logging
@@ -31,6 +11,9 @@ import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
+
+from data.database import DatabaseError
+from src.repository.mlTrainingSampleRepository import MLTrainingSampleRepository
 
 logger = logging.getLogger(__name__)
 
@@ -231,14 +214,14 @@ def _build_ml_model(samples: tuple[tuple[str, str], ...]):
     return model
 
 
-def _classify_by_ml(description: str, model) -> ClassificationResult | None:
+def _classify_by_ml(description: str, model, min_confidence: float = MIN_ML_CONFIDENCE) -> ClassificationResult | None:
     """Return a result if the model's confidence reaches the threshold."""
     if model is None:
         return None
     try:
         probs = model.predict_proba([_normalise(description)])[0]
         best = int(probs.argmax())
-        if float(probs[best]) < MIN_ML_CONFIDENCE:
+        if float(probs[best]) < min_confidence:
             return None
         return ClassificationResult(
             category=str(model.classes_[best]),
@@ -299,16 +282,30 @@ class TransactionClassifier:
         df["MLConfidence"] = [r.confidence for r in results]
         return df
 
-    def add_feedback(self, description: str, correct_category: str, correct_sub: str | None = None) -> None:
-        """Record a manual correction for future retraining.
+    def predict_ml(self, description: str, min_confidence: float = MIN_ML_CONFIDENCE) -> ClassificationResult | None:
+        """ML layer only (None when the model is not trained or not confident enough)."""
+        return _classify_by_ml(description, self._ml, min_confidence)
 
-        Not persisted yet: wire it to a MLTrainingSampleRepository and clear the
-        model cache so the next request retrains. The description is deliberately
-        not logged (it is financial data).
+    def add_feedback(
+        self,
+        description: str,
+        correct_category: str,
+        correct_sub: str | None = None,
+        source: str = "manual",
+    ) -> bool:
+        """Persist a correction in MLTrainingSample so future runs learn from it.
+
+        `source` is 'manual' (you changed the category), 'confirmed_rule' or 'confirmed_ml'
+        (you accepted a suggestion). Returns True when it was saved. A new sample changes the
+        sample tuple, which is the model cache key, so the next model is retrained automatically.
+        Subcategories are not stored yet (correct_sub is ignored).
         """
-        logger.info("Feedback recorded for category '%s' / '%s'.", correct_category, correct_sub)
-        # TODO: MLTrainingSampleRepository.add(description, correct_category, correct_sub)
-        # TODO: _build_ml_model.clear() to force a retrain on the next request
+        try:
+            saved, _ = MLTrainingSampleRepository().add_samples([(description, correct_category, source)])
+        except DatabaseError:
+            logger.warning("Could not save the correction to MLTrainingSample.")
+            return False
+        return saved > 0
 
 
 # ---------------------------------------------------------------------------

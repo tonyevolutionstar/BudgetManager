@@ -30,9 +30,9 @@ VALUES ('EXPENSE'), ('INCOME'), ('TRANSFER');
 CREATE TABLE IF NOT EXISTS Category (
   ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   NAME VARCHAR(100) NOT NULL UNIQUE,
-  CategoryTypeId INT NOT NULL references CategoryType(Id),
-  color char(7),
-  icon VARCHAR(10),
+  CategoryTypeId INT NOT NULL REFERENCES CategoryType(Id),
+  Color CHAR(7),
+  Icon VARCHAR(10),
   MonthlyBudget NUMERIC(10, 2) NOT NULL
 );
 
@@ -58,9 +58,9 @@ FROM (VALUES
 JOIN CategoryType ct ON ct.name = v.type_name;
 
 CREATE TABLE IF NOT EXISTS SubCategory (
-  ID int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  name varchar(200) not null,
-  categoryId int not null,
+  ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name VARCHAR(200) NOT NULL,
+  categoryId INT NOT NULL,
   CONSTRAINT fk_category
   FOREIGN KEY (categoryId) REFERENCES category(ID), 
   UNIQUE (NAME, categoryId)
@@ -72,7 +72,7 @@ FROM (VALUES
   ('Rent', 'Housing'), ('Credit', 'Housing'), ('Condominium', 'Housing'),
   ('Electricity and Gas', 'Housing'), ('Water', 'Housing'), ('Internet', 'Housing'),
   ('Public Transport', 'Transportation'), ('Fuel', 'Transportation'), ('Car Inspection', 'Transportation'),
-  ('Car Maintenance', 'Transportation'), ('Parking fee', 'Transportation'),
+  ('Car MaINTenance', 'Transportation'), ('Parking fee', 'Transportation'),
   ('Groceries', 'Food'), ('Restaurants', 'Food'), ('Coffee Shop', 'Food'), ('Bakery', 'Food'),
   ('Phone', 'Utilities'),
   ('Movies', 'Entertainment'), ('Concerts', 'Entertainment'), ('Games', 'Entertainment'),
@@ -90,26 +90,28 @@ FROM (VALUES
 ) AS v(name, category_name)
 JOIN Category c ON c.name = v.category_name;
 
+CREATE INDEX IF NOT EXISTS idx_subcategory_category ON SubCategory (categoryId);
+
 CREATE TABLE IF NOT EXISTS ClassificationRule (
-  ID int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, 
-  Pattern varchar(200) NOT NULL,
-  MatchType varchar(10) NOT NULL DEFAULT 'contains' CHECK (MatchType IN ('contains', 'starts_with', 'exact', 'regex')), 
-  CategoryId int NOT NULL REFERENCES CATEGORY(Id),
-  SubCategoryId int NULL REFERENCES SubCategory(Id)
+  ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, 
+  Pattern VARCHAR(200) NOT NULL,
+  MatchType VARCHAR(10) NOT NULL, 
+  CategoryId INT NOT NULL REFERENCES CATEGORY(Id),
+  SubCategoryId INT NULL REFERENCES SubCategory(Id)
 );
 
 CREATE INDEX idx_rule_pattern on ClassificationRule (LOWER(pattern));
 
 CREATE TABLE IF NOT EXISTS Bank (
-  ID int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  NAME text not null,
-  Abbreviation text not null,
-  DatePattern text not null,
-  DateEncoding text not null
+  ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  NAME TEXT NOT NULL,
+  Abbreviation TEXT NOT NULL,
+  DatePattern TEXT NOT NULL,
+  DateEncoding TEXT NOT NULL
 );
 
 INSERT INTO Bank (Name, Abbreviation, DatePattern, DateEncoding)
-VALUES 
+VALUES
   ('Caixa Geral Depósitos', 'CGD',       '(\d{2}[/-]\d{2}[/-]\d{4})', 'latin1'),
   ('Millennium BCP',        'BCP',       '(\d{4}[/-]\d{2}[/-]\d{2})', 'utf-8'),
   ('Novo Banco',            'NB',        '(\d{2}[/-]\d{2}[/-]\d{4})', 'utf-8'),
@@ -119,35 +121,35 @@ VALUES
 CREATE TABLE IF NOT EXISTS Account (
   ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   NAME VARCHAR(20) NOT NULL UNIQUE,
-  Iban varchar(34) NOT NULL UNIQUE, 
-  BankId int not null references Bank(Id), 
-  Currency char(3) NOT NULL, 
-  AccountTypeId int not null references AccountType(ID),
-  CurrentBalance numeric(14, 2) not null
+  Iban VARCHAR(34) NOT NULL UNIQUE, 
+  BankId INT NOT NULL REFERENCES Bank(Id), 
+  Currency CHAR(3) NOT NULL, 
+  AccountTypeId INT NOT NULL REFERENCES AccountType(ID),
+  CurrentBalance NUMERIC(14, 2) NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS BankTransaction (
-  ID int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  AccountId int not null References Account(Id), 
-  OperationDate DATE not null,
+  ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  AccountId INT NOT NULL REFERENCES Account(Id), 
+  OperationDate DATE NOT NULL,
   ValueDate Date, 
-  Description Text not null,
-  Amount numeric(14, 2) not null,
-  AccountingBalance numeric(14, 2) not null,
-  CategoryId int not null REFERENCES CATEGORY(Id),
-  SubCategoryId int null References SubCategory(Id).
-    CONSTRAINT fk_tx_subcategory
-    FOREIGN KEY (SubCategoryId, CategoryId) REFERENCES SubCategory (ID, categoryId)
+  Description Text NOT NULL,
+  Amount NUMERIC(14, 2) NOT NULL,
+  AccountingBalance NUMERIC(14, 2) NOT NULL,
+  CategoryId INT NOT NULL REFERENCES CATEGORY(Id),
+  SubCategoryId INT NULL REFERENCES SubCategory(Id)
 );
 
-CREATE INDEX idx_tx_account_date ON BankTransaction (accountid, operationdate DESC);
-CREATE INDEX idx_tx_category     ON BankTransaction (categoryid);
-CREATE INDEX idx_tx_date         ON BankTransaction (operationdate DESC);
+CREATE INDEX IF NOT EXISTS  idx_tx_account_date ON BankTransaction (accountid, operationdate DESC);
+CREATE INDEX IF NOT EXISTS idx_tx_category      ON BankTransaction (categoryid);
+CREATE INDEX IF NOT EXISTS idx_tx_date          ON BankTransaction (operationdate DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tx_dedupe  ON BankTransaction (AccountId, OperationDate, Amount, AccountingBalance, md5(Description));
 
 CREATE TABLE IF NOT EXISTS BankStatementExportFormat (
-	ID int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-	ColumnsExport text not null,
-	BankId int not null references Bank(Id)
+	ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	ColumnsExport TEXT NOT NULL,
+	BankId INT NOT NULL REFERENCES Bank(Id),
+  CONSTRAINT uq_export_format UNIQUE (BankId, ColumnsExport)
 );
 
 INSERT INTO BankStatementExportFormat (ColumnsExport, BankId)
@@ -155,35 +157,44 @@ VALUES
 	('Date;BalanceDate;Description;Expense;Income;Accounting Balance;Balance;Category', 1);
 
 CREATE TABLE IF NOT EXISTS Budget (
-  ID int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  CategoryId int NOT NULL REFERENCES Category(Id), 
-  Year smallint NOT NULL, 
-  MONTH SMALLINT NOT NULL, 
-  Amount numeric (10, 2) NOT NULL, 
+  ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  CategoryId INT NOT NULL REFERENCES Category(Id), 
+  Year SMALLINT NOT NULL, 
+  Month SMALLINT NOT NULL, 
+  Amount NUMERIC (10, 2) NOT NULL, 
   Unique (CategoryId, YEAR, MONTH)
 );
 
 CREATE TABLE IF NOT EXISTS Transfer (
-    id              SERIAL PRIMARY KEY,
-    fromAccountId   INTEGER      NOT NULL REFERENCES Account(id),
-    toAccountId     INTEGER      NOT NULL REFERENCES Account(id),
+    id              INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    fromAccountId   INTEGER  NOT NULL REFERENCES Account(id),
+    toAccountId     INTEGER  NOT NULL REFERENCES Account(id),
     amount          NUMERIC(14,2) NOT NULL,
-    transferDate    DATE         NOT NULL,
+    transferDate    DATE NOT NULL,
     description     TEXT,
-    fromBankTxId    INTEGER      REFERENCES BankTransaction(id),
-    toBankTxId     INTEGER      REFERENCES BankTransaction(id)
+    fromBankTxId    INTEGER  REFERENCES BankTransaction(id),
+    toBankTxId      INTEGER  REFERENCES BankTransaction(id),
+    CHECK (fromAccountId <> toAccountId)
 );
 
 CREATE TABLE IF NOT EXISTS MLTrainingSample (
-    id              SERIAL PRIMARY KEY,
+    id              INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     description     TEXT    NOT NULL,
     categoryId      INTEGER NOT NULL REFERENCES Category(id),
     subCategoryId   INTEGER REFERENCES SubCategory(id),
-    source          VARCHAR(20) DEFAULT 'manual' CHECK (source IN ('manual','confirmed_ml','confirmed_rule')),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    source          VARCHAR(20) DEFAULT 'manual'
+                    CHECK (source IN ('manual','confirmed_ml','confirmed_rule')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_ml_subcategory
+    FOREIGN KEY (sub_category_id, category_id) REFERENCES SubCategory (ID, categoryId)
 );
  
-CREATE INDEX idx_ml_category ON MLTrainingSample (categoryId);
+CREATE INDEX IF NOT EXISTS idx_ml_category ON MLTrainingSample (categoryId);
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_tx_dedupe
-  ON BankTransaction (AccountId, OperationDate, Amount, AccountingBalance, md5(Description));
+DELETE FROM MLTrainingSample a
+USING MLTrainingSample b
+WHERE a.id < b.id
+  AND a.categoryid = b.categoryid
+  AND md5(lower(a.description)) = md5(lower(b.description));
+ 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ml_sample ON MLTrainingSample (md5(lower(description)), categoryid);

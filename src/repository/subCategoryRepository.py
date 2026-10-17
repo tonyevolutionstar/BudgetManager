@@ -3,8 +3,10 @@ from typing import Tuple
 
 from data.database import (
     IntegrityViolation,
+    execute_statements,
     fetch_query_results,
     perform_database_operation,
+    to_records,
 )
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ class SubCategoryRepository:
     def get_sub_categories(self) -> list[dict]:
         """Retrieve all subcategories (keys: id, name, categoryid)."""
         result = fetch_query_results("SELECT id, name, categoryId FROM SubCategory")
-        return [] if result.empty else result.to_dict(orient="records")
+        return [] if result.empty else to_records(result)
 
     def get_sub_categories_by_category(self, category_id: int) -> list[dict]:
         """Retrieve subcategories for a specific category."""
@@ -33,7 +35,7 @@ class SubCategoryRepository:
             """,
             params={"category_id": int(category_id)},
         )
-        return [] if result.empty else result.to_dict(orient="records")
+        return [] if result.empty else to_records(result)
 
     def add_sub_category(self, categoryId: int, name: str) -> Tuple[bool, str]:
         """Add a new subcategory. Returns (success, message)."""
@@ -64,28 +66,30 @@ class SubCategoryRepository:
 
         return True, f"Subcategory '{name}' added successfully."
 
-    def remove_sub_category(self, id: int) -> Tuple[bool, str]:
-        """Remove a subcategory unless something still references it."""
+    def remove_sub_category(self, id: int) -> tuple[bool, str]:
+        """Remove a subcategory unless transactions or rules still use it.
+        Learned training samples that point at it are derived data and are removed with it.
+        """
         usage = fetch_query_results(
             """
             SELECT
-              (SELECT COUNT(*) FROM BankTransaction    WHERE subcategoryid   = :id) AS transactions,
-              (SELECT COUNT(*) FROM ClassificationRule WHERE subcategoryid   = :id) AS rules,
-              (SELECT COUNT(*) FROM MLTrainingSample   WHERE sub_category_id = :id) AS samples
+              (SELECT COUNT(*) FROM BankTransaction    WHERE subcategoryid = :id) AS transactions,
+              (SELECT COUNT(*) FROM ClassificationRule WHERE subcategoryid = :id) AS rules
             """,
             params={"id": int(id)},
         ).iloc[0]
         blockers = [f"{int(usage[k])} {label}" for k, label in (
             ("transactions", "transaction(s)"),
             ("rules", "classification rule(s)"),
-            ("samples", "training sample(s)"),
+            
         ) if int(usage[k])]
         if blockers:
             return False, "Cannot remove this subcategory, it is still used by " + ", ".join(blockers) + "."
 
-        removed = perform_database_operation(
-            "DELETE FROM SubCategory WHERE id = :id", params={"id": int(id)}
-        )
-        if removed == 0:
+        counts = execute_statements([
+            ("DELETE FROM MLTrainingSample WHERE sub_category_id = :id", {"id": int(id)}),
+            ("DELETE FROM SubCategory WHERE id = :id", {"id": int(id)}),
+        ])
+        if counts[1] == 0:
             return False, f"Subcategory with ID {id} not found."
         return True, "Subcategory removed successfully."

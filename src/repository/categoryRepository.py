@@ -9,6 +9,7 @@ from data.database import (
     fetch_query_results,
     get_table_columns,
     perform_database_operation,
+    to_records,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ class CategoryRepository:
         result["id"] = result["id"].astype(int)
         result["categorytypeid"] = result["categorytypeid"].astype(int)
         result["monthlybudget"] = result["monthlybudget"].astype(float)
-        return result.to_dict(orient="records")
+        return to_records(result)
 
     def get_category_by_name(self, name: str) -> list[dict]:
         """Retrieve a category by name (case-insensitive)."""
@@ -70,7 +71,7 @@ class CategoryRepository:
             "SELECT * FROM Category WHERE LOWER(name) = LOWER(:name)",
             params={"name": name.strip()},
         )
-        return [] if result.empty else result.to_dict(orient="records")
+        return [] if result.empty else to_records(result)
 
     def get_category_by_id(self, categoryId: int) -> list[dict]:
         """Retrieve a category by its ID."""
@@ -78,7 +79,7 @@ class CategoryRepository:
             "SELECT * FROM Category WHERE id = :id",
             params={"id": int(categoryId)},
         )
-        return [] if result.empty else result.to_dict(orient="records")
+        return [] if result.empty else to_records(result)
 
     # ------------------------------------------------------------------
     # Writes
@@ -172,19 +173,20 @@ class CategoryRepository:
                  WHERE categoryid = :id
                     OR subcategoryid IN (SELECT id FROM SubCategory WHERE categoryid = :id)) AS rules,
               (SELECT COUNT(*) FROM MLTrainingSample
-                 WHERE category_id = :id
-                    OR sub_category_id IN (SELECT id FROM SubCategory WHERE categoryid = :id)) AS samples
+                 WHERE categoryid = :id
+                    OR sub_categoryid IN (SELECT id FROM SubCategory WHERE categoryid = :id)) AS samples
             """,
             params={"id": int(id)},
         )
         row = result.iloc[0]
         return {k: int(row[k]) for k in ("transactions", "rules", "samples")}
 
-    def remove_category(self, id: int) -> Tuple[bool, str]:
+    def remove_category(self, id: int) -> tuple[bool, str]:
         """Remove a category and its subcategories atomically.
 
-        Refuses (instead of failing half-way through) if transactions, rules or
-        training samples still reference it. Its monthly budgets are removed with it.
+        Refuses (instead of failing half-way through) if transactions or classification rules
+        still reference it. Its monthly budgets and learned training samples are derived data
+        and are removed with it.
         """
         if not self.get_category_by_id(id):
             return False, f"Category with ID {id} not found."
@@ -193,7 +195,6 @@ class CategoryRepository:
         blockers = [f"{n} {label}" for label, n in (
             ("transaction(s)", usage["transactions"]),
             ("classification rule(s)", usage["rules"]),
-            ("training sample(s)", usage["samples"]),
         ) if n]
         if blockers:
             return False, "Cannot remove this category, it is still used by " + ", ".join(blockers) + "."
@@ -201,6 +202,8 @@ class CategoryRepository:
         params = {"id": int(id)}
         execute_statements([
             ("DELETE FROM Budget WHERE categoryid = :id", params),
+            ("""DELETE FROM MLTrainingSample WHERE categoryid = :id
+                  OR subcategoryid IN (SELECT id FROM SubCategory WHERE categoryid = :id)""", params),
             ("DELETE FROM SubCategory WHERE categoryid = :id", params),
             ("DELETE FROM Category WHERE id = :id", params),
         ])
