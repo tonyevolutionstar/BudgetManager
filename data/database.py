@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Sequence
 
 import numpy as np
@@ -26,13 +27,13 @@ class IntegrityViolation(DatabaseError):
 
 def _to_native(value: Any) -> Any:
     """Convert NumPy / pandas scalars to types psycopg2 can adapt."""
-    if value is pd.NaT:
+    if value is pd.NaT or value is pd.NA:
         return None
     if isinstance(value, np.generic):
         value = value.item()
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
-    if isinstance(value, float): 
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
 

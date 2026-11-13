@@ -250,4 +250,11 @@ def auto_categorise_session(mode: str = "uncategorised") -> int:
     new_df, changes = auto_categorise(df, get_known_categories(extractor), mode, extractor, memory, ml)
     st.session_state.df = new_df
     st.session_state.model = None   # the transaction classifier retrains with the new categories
+    if not changes.empty:
+        from service.FileImporterService import save_dataframe
+        try:
+            save_dataframe(new_df)
+        except OSError:
+            logger.exception("Could not persist automatic categories")
+            st.warning("Categories changed in this session, but the CSV could not be saved.")
     return len(changes)

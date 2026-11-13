@@ -23,6 +23,11 @@ def init_session_state():
         "model": None,
         "cat_version": 0
     }
+    if "df" not in st.session_state:
+        try:
+            defaults["df"] = FileImporterService.load_saved_transactions()
+        except (FileImporterService.StatementImportError, OSError) as exc:
+            st.warning(f"Saved transactions could not be loaded: {exc}")
     for key, default in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default
@@ -130,9 +135,16 @@ with st.expander(":material/label: Automatic categories"):
                 items = categorizer.feedback_items(changes, edited)
 
                 st.session_state.df = categorizer.apply_categories(all_df, edited)
+                saved_to_disk = True
+                try:
+                    FileImporterService.save_dataframe(st.session_state.df)
+                except OSError:
+                    saved_to_disk = False
                 st.session_state.model = None
                 st.session_state.cat_version += 1
                 message = f"Categories applied to {len(edited)} transactions."
+                if not saved_to_disk:
+                    message += " The updated CSV could not be saved; keep this page open."
                 try:
                     saved, skipped = categorizer.save_feedback(items)
                     if saved:
@@ -185,4 +197,4 @@ with st.expander(":material/label: Automatic categories"):
 # ---------------------------------------------------------------------------
 df, filter_type, start_date, end_date = dt.date_filter(st.session_state.df)
 st.header("📜 Transaction History")
-st.dataframe(st.session_state.df, width="stretch", hide_index=True)
+st.dataframe(df, width="stretch", hide_index=True)
