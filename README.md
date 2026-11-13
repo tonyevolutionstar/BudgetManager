@@ -14,9 +14,10 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # then fill it in (
 
 ### Database
 
-Run `data/DatabaseSchema.sql` against your PostgreSQL database. It is safe to run repeatedly
-(it never drops anything). `data/ResetDatabase.sql` wipes everything.
-If your database was created with the **old** schema, run `data/migrations/002_existing_database_hardening.sql` once.
+Run `data/DatabaseSchema.sql` against your PostgreSQL database. **Warning: the current script starts with DROP TABLE statements and resets existing data.**
+Use it only on a new or disposable database. This repository does not currently contain the
+reset script or hardening migration mentioned in earlier instructions. Back up an existing
+database before any schema changes.
 
 ## Run
 
@@ -41,8 +42,10 @@ For each transaction the app looks for evidence, in this order:
 
 Learning is stored in the `MLTrainingSample` table: your corrections (`manual`) and the suggestions you accept
 (`confirmed_rule` / `confirmed_ml`). Automatic runs (after an import, the Dashboard button) are never saved.
-Changes to the transactions live in the session, not in a file or the database.
-Existing database? Run `data/migrations/003_ml_training_sample_unique.sql` once.
+Imported transactions and category changes are saved atomically to the personal CSV and
+restored when a new Home session starts. Learning samples remain in the database.
+The CSV is a single-user local file; it is not a multi-user storage or account-isolation mechanism.
+The migration `data/migrations/003_ml_training_sample_unique.sql` is not currently included in this repository.
 
 ## Data and privacy
 
@@ -59,3 +62,10 @@ Existing database? Run `data/migrations/003_ml_training_sample_unique.sql` once.
 | `data/` | `database.py`, SQL schema/migrations, `bankStatementExtractor.py` |
 | `src/repository/` | Database access (one class per table group) |
 | `src/utils/` | Date helpers, login gate |
+
+
+## Regression checks
+
+Run `uv run python -m unittest discover -s tests -v`. The tests cover finite database
+amounts, PDF file-like input, CSV errors and roundtrips, preservation of custom category
+names, first-run recovery and custom date filtering. No live database is required.

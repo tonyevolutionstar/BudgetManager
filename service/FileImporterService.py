@@ -94,7 +94,7 @@ def _finalise(df: pd.DataFrame) -> pd.DataFrame:
         out[col] = _parse_numbers(out[col])
 
     out["Description"] = out["Description"].fillna("").astype(str).str.strip()
-    category = out["Category"].fillna("").astype(str).str.strip().str.capitalize()
+    category = out["Category"].fillna("").astype(str).str.strip()
     out["Category"] = category.where(category != "", DEFAULT_CATEGORY)
     return out.reset_index(drop=True)
 
@@ -131,6 +131,12 @@ def load_csv_file(file, skip_rows: int = 0, header_row: int = 0) -> pd.DataFrame
     if "Category" not in raw.columns:
         raw["Category"] = ""
 
+    missing = [column for column in CSV_COLUMNS[:-1] if column not in raw.columns]
+    if missing:
+        raise StatementImportError(
+            "The CSV needs the bank export columns: " + ", ".join(CSV_COLUMNS[:-1])
+            + ". Check the header and rows to skip."
+        )
     df = _finalise(raw)
     if df.empty:
         raise StatementImportError("No valid transactions found. Check 'rows to skip' / 'header row'.")
@@ -152,7 +158,7 @@ def load_pdf_file(file) -> pd.DataFrame:
         raise StatementImportError("Could not read this PDF.") from exc
     stream.seek(0)
 
-    result = BankStatementExtractor().process_statement(stream.name)
+    result = BankStatementExtractor().process_statement(stream)
     if "error" in result or not result.get("transactions"):
         raise StatementImportError(result.get("error", "Could not extract transactions from the PDF."))
 
@@ -198,6 +204,11 @@ def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.Dat
 
     st.session_state.df = df
     st.session_state.model = None  # force the classifier to retrain
+    try:
+        save_dataframe(df)
+    except OSError:
+        logger.exception("Could not persist imported transactions")
+        st.warning("Transactions imported into this session, but the CSV could not be saved. Keep this page open.")
     st.success(f"Imported {len(df)} transactions.")
     if extension == "pdf":
         st.warning(
@@ -227,3 +238,11 @@ def save_dataframe(df: pd.DataFrame, path: str | os.PathLike = DEFAULT_CSV_PATH)
     tmp = path.with_name(path.name + ".tmp")
     df.to_csv(tmp, sep=";", index=False, encoding="utf-8-sig", date_format=dateUtils.DATE_FORMAT_FILE)
     os.replace(tmp, path)
+
+
+def load_saved_transactions(path: str | os.PathLike = DEFAULT_CSV_PATH) -> pd.DataFrame:
+    """Restore the personal CSV using the same date and amount conversion as imports."""
+    path = Path(path)
+    if not path.exists():
+        return pd.DataFrame(columns=CSV_COLUMNS)
+    return load_csv_file(path)
