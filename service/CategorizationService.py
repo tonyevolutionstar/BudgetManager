@@ -11,16 +11,10 @@ from data.bankStatementExtractor import BankStatementExtractor
 from data.database import DatabaseError
 from service.ClassifierService import TransactionClassifier
 from src.repository import CategoryRepository, MLTrainingSampleRepository
+from data.constants import (MODES, CHANGE_COLUMNS, LEARNED, ML_SUGGESTION_CONFIDENCE,
+                      MIN_KEY_LENGTH, DEFAULT_CATEGORY)
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_CATEGORY = "Others"
-MODES = ("uncategorised", "all")
-CHANGE_COLUMNS = ["Row", "Date", "Description", "Current", "Suggested", "Confidence", "Matched"]
-LEARNED = "learned"
-ML_SUGGESTION_CONFIDENCE = 0.7     # stricter than the classifier's own 0.55: suggestions get applied in bulk
-MIN_KEY_LENGTH = 4
-
 
 # ---------------------------------------------------------------------------
 # Known categories and the shared extractor
@@ -163,7 +157,10 @@ def suggest_categories(
     Pass the same df to apply_categories().
     """
     if mode not in MODES:
-        raise ValueError(f"mode must be one of {MODES}")
+        raise ValueError(
+            f"Invalid mode '{mode}'. Must be one of: {', '.join(MODES)}. "
+            f"Use 'uncategorised' to only update empty categories, or 'all' to re-evaluate all transactions."
+        )
     if df is None or df.empty:
         return pd.DataFrame(columns=CHANGE_COLUMNS)
 

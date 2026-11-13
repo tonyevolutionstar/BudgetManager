@@ -11,13 +11,11 @@ from data.database import (
     perform_database_operation,
     to_records,
 )
+from constants import (MAX_NAME, MAX_ICON, MAX_BUDGET)
 
 logger = logging.getLogger(__name__)
 
 _COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
-MAX_NAME = 100            # Category.NAME varchar(100)
-MAX_ICON = 10             # Category.icon varchar(10)
-MAX_BUDGET = 99_999_999.99  # Category.MonthlyBudget NUMERIC(10, 2)
 
 def _validate(name: str, color: str | None, icon: str | None, monthly_budget: float | None) -> str | None:
     """Return an error message, or None when the input is valid."""
@@ -174,7 +172,7 @@ class CategoryRepository:
                     OR subcategoryid IN (SELECT id FROM SubCategory WHERE categoryid = :id)) AS rules,
               (SELECT COUNT(*) FROM MLTrainingSample
                  WHERE categoryid = :id
-                    OR sub_categoryid IN (SELECT id FROM SubCategory WHERE categoryid = :id)) AS samples
+                    OR subcategoryid IN (SELECT id FROM SubCategory WHERE categoryid = :id)) AS samples
             """,
             params={"id": int(id)},
         )

@@ -11,18 +11,10 @@ import streamlit as st
 
 from data.bankStatementExtractor import BankStatementExtractor
 import src.utils.date as dateUtils
+from data.constants import (MAX_UPLOAD_BYTES, MAX_PAGES, DEFAULT_CATEGORY,
+                      DEFAULT_CSV_PATH, DATE_FORMAT_FILE, CSV_COLUMNS, NUMERIC_COLUMNS)
 
 logger = logging.getLogger(__name__)
-
-CSV_COLUMNS = ["Date", "BalanceDate", "Description", "Expense", "Income",
-               "Accounting Balance", "Balance", "Category"]
-SUPPORTED_TYPES = ["csv", "pdf"]
-NUMERIC_COLUMNS = ["Expense", "Income", "Accounting Balance", "Balance"]
-DEFAULT_CATEGORY = "Others"
-DEFAULT_CSV_PATH = Path("data/csv/transactions.csv")
-
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024   # also set server.maxUploadSize in .streamlit/config.toml
-MAX_PDF_PAGES = 50
 
 class StatementImportError(Exception):
     """A problem with the uploaded file that is safe to show to the user."""
@@ -76,7 +68,7 @@ def _parse_dates(series: pd.Series) -> pd.Series:
     if pd.api.types.is_datetime64_any_dtype(series):
         return series
     s = series.astype("string").str.strip()
-    parsed = pd.to_datetime(s, format=dateUtils.DATE_FORMAT_FILE, errors="coerce")
+    parsed = pd.to_datetime(s, format=DATE_FORMAT_FILE, errors="coerce")
     missing = parsed.isna() & s.notna()
     if missing.any():
         parsed.loc[missing] = pd.to_datetime(s[missing], dayfirst=True, errors="coerce", format="mixed")
@@ -120,7 +112,13 @@ def load_csv_file(file, skip_rows: int = 0, header_row: int = 0) -> pd.DataFrame
         )
     except (pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
         logger.warning("CSV parse error: %s", exc)
-        raise StatementImportError("Could not parse the CSV. Check 'rows to skip' / 'header row'.") from exc
+        raise StatementImportError(
+            f"Could not parse the CSV file. Please check: "
+            f"1. File format (should be semicolon-separated), "
+            f"2. 'Rows to skip' setting (current: {skip_rows}), "
+            f"3. 'Header row' setting (current: {header_row}), "
+            f"4. That the file is not empty or corrupted."
+        ) from exc
 
     # A trailing ';' on every line produces an empty "Unnamed: n" column: drop trailing ones only.
     while raw.shape[1] and str(raw.columns[-1]).startswith("Unnamed") and raw.iloc[:, -1].isna().all():
@@ -143,18 +141,31 @@ def load_pdf_file(file) -> pd.DataFrame:
 
     try:
         with pdfplumber.open(stream) as pdf:
-            if len(pdf.pages) > MAX_PDF_PAGES:
-                raise StatementImportError(f"PDF has too many pages (max {MAX_PDF_PAGES}).")
+            if len(pdf.pages) > MAX_PAGES:
+                raise StatementImportError(f"PDF has too many pages (max {MAX_PAGES}).")
     except StatementImportError:
         raise
     except Exception as exc:
         logger.exception("Could not open PDF")
-        raise StatementImportError("Could not read this PDF.") from exc
+        raise StatementImportError(
+            "Could not read this PDF. Please ensure: "
+            "1. The file is a valid PDF document, "
+            "2. It is not password-protected or corrupted, "
+            "3. It contains readable text (not just scanned images)."
+        ) from exc
     stream.seek(0)
 
     result = BankStatementExtractor().process_statement(stream.name)
-    if "error" in result or not result.get("transactions"):
-        raise StatementImportError(result.get("error", "Could not extract transactions from the PDF."))
+    if "error" in result:
+        raise StatementImportError(result["error"])
+    if not result.get("transactions"):
+        raise StatementImportError(
+            "Could not extract transactions from the PDF. This may be because: "
+            "1. The PDF format is not supported, "
+            "2. The transaction table could not be located, "
+            "3. The PDF contains only scanned images (OCR not supported), "
+            "4. The statement is from an unsupported bank format."
+        )
 
     t = pd.DataFrame(result["transactions"])
     df = pd.DataFrame({
@@ -193,7 +204,13 @@ def handle_upload_file(uploaded_file, skip_rows: int, header_row: int) -> pd.Dat
         return current
     except Exception:
         logger.exception("Unexpected error importing %s file", extension)
-        st.error("Something went wrong reading this file. Check that it is a valid bank statement.")
+        st.error(
+            "An unexpected error occurred while processing the file. "
+            "Please try: "
+            "1. Checking that the file is not corrupted, "
+            "2. Ensuring it's a valid bank statement CSV or PDF, "
+            "3. Contacting support if the problem persists."
+        )
         return current
 
     st.session_state.df = df
@@ -225,5 +242,5 @@ def save_dataframe(df: pd.DataFrame, path: str | os.PathLike = DEFAULT_CSV_PATH)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    df.to_csv(tmp, sep=";", index=False, encoding="utf-8-sig", date_format=dateUtils.DATE_FORMAT_FILE)
+    df.to_csv(tmp, sep=";", index=False, encoding="utf-8-sig", date_format=DATE_FORMAT_FILE)
     os.replace(tmp, path)

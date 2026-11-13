@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
+import data.constants as const
 
 from service import FileImporterService
 from src.utils import date as dt
@@ -19,7 +19,7 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 def init_session_state():
     defaults = {
-        "df": pd.DataFrame(columns=FileImporterService.CSV_COLUMNS),
+        "df": pd.DataFrame(columns=const.CSV_COLUMNS),
         "model": None,
         "cat_version": 0
     }
@@ -57,7 +57,7 @@ with st.expander(":material/settings: Import transactions", expanded=True):
     
     uploaded_file = st.file_uploader(
         label="Upload a bank statement (CSV or PDF)",
-        type=FileImporterService.SUPPORTED_TYPES,
+        type=const.SUPPORTED_TYPES,
         accept_multiple_files=False
     )
     
@@ -118,7 +118,7 @@ with st.expander(":material/label: Automatic categories"):
                 disabled=["Row", "Date", "Description", "Current", "Confidence", "Matched"],
                 column_config={
                     "Row": None,   # internal: position in the transaction table
-                    "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
+                    "Date": st.column_config.DateColumn("Date", format=const.DATE_FORMAT_DISPLAY),
                     "Suggested": st.column_config.SelectboxColumn(
                         "Suggested", options=categorizer.category_options(known, extractor), required=True,
                     ),
@@ -185,4 +185,4 @@ with st.expander(":material/label: Automatic categories"):
 # ---------------------------------------------------------------------------
 df, filter_type, start_date, end_date = dt.date_filter(st.session_state.df)
 st.header("📜 Transaction History")
-st.dataframe(st.session_state.df, width="stretch", hide_index=True)
+st.dataframe(df, width="stretch", hide_index=True)

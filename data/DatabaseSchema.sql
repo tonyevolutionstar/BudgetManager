@@ -1,15 +1,15 @@
-DROP TABLE IF EXISTS Transfer;
-DROP TABLE IF EXISTS MLTrainingSample;
-DROP TABLE IF EXISTS Budget;
-DROP TABLE IF EXISTS BankStatementExportFormat;
-DROP TABLE IF EXISTS ClassificationRule;
-DROP TABLE IF EXISTS BankTransaction;
-DROP TABLE IF EXISTS Account;
-DROP TABLE IF EXISTS Bank;
-DROP TABLE IF EXISTS AccountType;
-DROP TABLE IF EXISTS SubCategory;
-DROP TABLE IF EXISTS Category;
-DROP TABLE IF EXISTS CategoryType;
+-- DROP TABLE IF EXISTS Transfer;
+-- DROP TABLE IF EXISTS MLTrainingSample;
+-- DROP TABLE IF EXISTS Budget;
+-- DROP TABLE IF EXISTS BankStatementExportFormat;
+-- DROP TABLE IF EXISTS ClassificationRule;
+-- DROP TABLE IF EXISTS BankTransaction;
+-- DROP TABLE IF EXISTS Account;
+-- DROP TABLE IF EXISTS Bank;
+-- DROP TABLE IF EXISTS AccountType;
+-- DROP TABLE IF EXISTS SubCategory;
+-- DROP TABLE IF EXISTS Category;
+-- DROP TABLE IF EXISTS CategoryType;
 
 CREATE TABLE IF NOT EXISTS AccountType (
   ID INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS MLTrainingSample (
                     CHECK (source IN ('manual','confirmed_ml','confirmed_rule')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT fk_ml_subcategory
-    FOREIGN KEY (sub_category_id, category_id) REFERENCES SubCategory (ID, categoryId)
+    FOREIGN KEY (subcategoryId, categoryId) REFERENCES SubCategory (ID, categoryId)
 );
  
 CREATE INDEX IF NOT EXISTS idx_ml_category ON MLTrainingSample (categoryId);

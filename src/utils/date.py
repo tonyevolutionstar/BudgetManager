@@ -3,11 +3,9 @@ from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
+import data.constants as const
 
 logger = logging.getLogger(__name__)
-
-DATE_FORMAT_FILE    = '%d/%m/%Y'
-DATE_FORMAT_DISPLAY = 'DD/MM/YYYY'
 
 def get_today() -> date:
     """Return today's date (date, not datetime)."""
@@ -19,19 +17,14 @@ def get_now() -> datetime:
 
 def format_date(d: datetime) -> str:
     """Format a date or datetime as DD/MM/YYYY string."""
-    return d.strftime(DATE_FORMAT_FILE)
+    return d.strftime(const.DATE_FORMAT_FILE)
 
 def parse_dates(series: pd.Series) -> pd.Series:
-    """Parse a Date column to datetime64 without swapping day and month.
-
-    Already-parsed datetimes are returned unchanged. Strings are parsed as
-    DD/MM/YYYY first, then with other day-first formats. Unparseable -> NaT.
-    (pd.to_datetime without dayfirst reads 03/04/2026 as March 4.)
-    """
+    """Parse a Date column to datetime64 without swapping day and month."""
     if pd.api.types.is_datetime64_any_dtype(series):
         return series
     s = series.astype("string").str.strip()
-    parsed = pd.to_datetime(s, format=DATE_FORMAT_FILE, errors="coerce")
+    parsed = pd.to_datetime(s, format=const.DATE_FORMAT_FILE, errors="coerce")
     missing = parsed.isna() & s.notna()
     if missing.any():
         parsed.loc[missing] = pd.to_datetime(s[missing], dayfirst=True, errors="coerce", format="mixed")
@@ -90,11 +83,11 @@ def date_filter(df: pd.DataFrame) -> tuple[pd.DataFrame, str, date, date]:
         col1, col2 = st.sidebar.columns(2)
         with col1:
             start_date = st.date_input(
-                "From", value=today, max_value=today, format=DATE_FORMAT_DISPLAY
+                "From", value=today, max_value=today, format=const.DATE_FORMAT_DISPLAY
             )
         with col2:
             end_date = st.date_input(
-                "To", value=today, max_value=today, format=DATE_FORMAT_DISPLAY
+                "To", value=today, max_value=today, format=const.DATE_FORMAT_DISPLAY
             )
         if start_date > end_date:
             st.sidebar.error("'From' must be on or before 'To'.")
@@ -108,8 +101,8 @@ def date_filter(df: pd.DataFrame) -> tuple[pd.DataFrame, str, date, date]:
         st.sidebar.info(f"Showing data for **{today.strftime('%B %Y')}**")
     else:
         st.sidebar.info(
-            f"From **{start_date.strftime(DATE_FORMAT_FILE)}** "
-            f"to **{end_date.strftime(DATE_FORMAT_FILE)}**"
+            f"From **{start_date.strftime(const.DATE_FORMAT_FILE)}** "
+            f"to **{end_date.strftime(const.DATE_FORMAT_FILE)}**"
         )
 
     return filtered_df, filter_type, start_date, end_date

@@ -14,13 +14,10 @@ from sklearn.pipeline import make_pipeline
 
 from data.database import DatabaseError
 from src.repository.mlTrainingSampleRepository import MLTrainingSampleRepository
+from data.constants import (MAX_DESCRIPTION_LEN, MAX_PATTERN_LEN, MIN_ML_SAMPLES,
+                      MIN_ML_CONFIDENCE)
 
 logger = logging.getLogger(__name__)
-
-MAX_DESCRIPTION_LEN = 300   # longer descriptions are truncated before matching
-MAX_PATTERN_LEN = 200       # ClassificationRule.Pattern is varchar(200)
-MIN_ML_SAMPLES = 20
-MIN_ML_CONFIDENCE = 0.55
 
 
 @dataclass

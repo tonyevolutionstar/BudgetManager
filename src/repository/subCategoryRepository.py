@@ -8,10 +8,9 @@ from data.database import (
     perform_database_operation,
     to_records,
 )
+from constants import MAX_SUB_NAME
 
 logger = logging.getLogger(__name__)
-
-MAX_NAME = 200  # SubCategory.name varchar(200)
 
 
 class SubCategoryRepository:
@@ -42,8 +41,8 @@ class SubCategoryRepository:
         name = (name or "").strip()
         if not name:
             return False, "Subcategory name is required."
-        if len(name) > MAX_NAME:
-            return False, f"Subcategory name must be at most {MAX_NAME} characters."
+        if len(name) > MAX_SUB_NAME:
+            return False, f"Subcategory name must be at most {MAX_SUB_NAME} characters."
 
         existing = fetch_query_results(
             """
@@ -87,7 +86,7 @@ class SubCategoryRepository:
             return False, "Cannot remove this subcategory, it is still used by " + ", ".join(blockers) + "."
 
         counts = execute_statements([
-            ("DELETE FROM MLTrainingSample WHERE sub_category_id = :id", {"id": int(id)}),
+            ("DELETE FROM MLTrainingSample WHERE subcategoryid = :id", {"id": int(id)}),
             ("DELETE FROM SubCategory WHERE id = :id", {"id": int(id)}),
         ])
         if counts[1] == 0:

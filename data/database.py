@@ -11,19 +11,15 @@ from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 
-
 class DatabaseError(Exception):
     """Generic, user-safe database failure. Details are in the logs."""
-
 
 class IntegrityViolation(DatabaseError):
     """A constraint (unique / foreign key / not null / check) was violated."""
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 def _to_native(value: Any) -> Any:
     """Convert NumPy / pandas scalars to types psycopg2 can adapt."""
     if value is pd.NaT:
@@ -32,10 +28,7 @@ def _to_native(value: Any) -> Any:
         value = value.item()
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
-    if isinstance(value, float): 
-        return None
     return value
-
 
 def _sanitise_params(params: dict | None) -> dict:
     return {key: _to_native(val) for key, val in (params or {}).items()}
@@ -51,7 +44,6 @@ def to_records(df: pd.DataFrame) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Connection
 # ---------------------------------------------------------------------------
-
 def get_db_connection():
     """Return the Streamlit SQL connection (cached by Streamlit internally).
 
@@ -64,11 +56,9 @@ def get_db_connection():
         logger.exception("Database connection error")
         raise DatabaseError("Could not connect to the database.") from exc
 
-
 # ---------------------------------------------------------------------------
 # Queries
 # ---------------------------------------------------------------------------
-
 def fetch_query_results(query: str, params: dict | None = None, ttl: int = 0) -> pd.DataFrame:
     """Execute a SELECT and return a DataFrame.
 
@@ -81,7 +71,6 @@ def fetch_query_results(query: str, params: dict | None = None, ttl: int = 0) ->
     except Exception as exc:
         logger.exception("Query execution error")
         raise DatabaseError("The database query failed.") from exc
-
 
 def execute_statements(statements: Sequence[tuple[str, dict | None]]) -> list[int]:
     """Run INSERT/UPDATE/DELETE statements atomically in a single transaction.
@@ -105,11 +94,9 @@ def execute_statements(statements: Sequence[tuple[str, dict | None]]) -> list[in
         raise DatabaseError("The database operation failed.") from exc
     return rowcounts
 
-
 def perform_database_operation(query: str, params: dict | None = None) -> int:
     """Execute a single INSERT / UPDATE / DELETE and return its rowcount."""
     return execute_statements([(query, params)])[0]
-
 
 def get_table_columns(table_name: str) -> list[str]:
     """Return the column names of a table in the current schema."""

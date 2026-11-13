@@ -15,8 +15,6 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # then fill it in (
 ### Database
 
 Run `data/DatabaseSchema.sql` against your PostgreSQL database. It is safe to run repeatedly
-(it never drops anything). `data/ResetDatabase.sql` wipes everything.
-If your database was created with the **old** schema, run `data/migrations/002_existing_database_hardening.sql` once.
 
 ## Run
 
@@ -42,7 +40,6 @@ For each transaction the app looks for evidence, in this order:
 Learning is stored in the `MLTrainingSample` table: your corrections (`manual`) and the suggestions you accept
 (`confirmed_rule` / `confirmed_ml`). Automatic runs (after an import, the Dashboard button) are never saved.
 Changes to the transactions live in the session, not in a file or the database.
-Existing database? Run `data/migrations/003_ml_training_sample_unique.sql` once.
 
 ## Data and privacy
 

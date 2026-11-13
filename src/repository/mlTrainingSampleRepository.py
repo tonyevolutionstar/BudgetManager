@@ -6,9 +6,6 @@ from data.database import execute_statements, fetch_query_results, to_records
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_SOURCES = ("manual", "confirmed_ml", "confirmed_rule")
-MAX_DESCRIPTION = 300
-
 
 class MLTrainingSampleRepository:
     """Labelled descriptions the app learns from (table MLTrainingSample).
@@ -30,9 +27,7 @@ class MLTrainingSampleRepository:
         samples = list(samples)
         statements = []
         for description, category, source in samples:
-            if source not in ALLOWED_SOURCES:
-                raise ValueError(f"source must be one of {ALLOWED_SOURCES}")
-            description = re.sub(r"\s+", " ", str(description or "")).strip()[:MAX_DESCRIPTION]
+            description = re.sub(r"\s+", " ", str(description or "")).strip()
             if not description or not category:
                 continue
             statements.append((
@@ -60,7 +55,7 @@ class MLTrainingSampleRepository:
             SELECT s.id, s.description, c.name AS category, sc.name AS sub_category, s.source, s.created_at
             FROM MLTrainingSample s
             JOIN Category c ON c.id = s.categoryid
-            LEFT JOIN SubCategory sc ON sc.id = s.sub_categoryid
+            LEFT JOIN SubCategory sc ON sc.id = s.subcategoryid
         """
         if limit is None:
             query, params = base + " ORDER BY s.created_at, s.id", {}

@@ -1,31 +1,3 @@
-"""Extract and categorise transactions from PDF bank statements.
-
-Changes vs. the previous version:
-* process_statement() called self._category_stats(), which did not exist
-  (AttributeError at the end of every PDF import). It is defined now.
-* Debit/credit is no longer guessed as "second amount = credit". A typical line
-  is `date date description amount balance`, so the old code turned every
-  balance into a credit. The sign is now resolved from the balance
-  continuity between consecutive lines (and the opening balance), then from
-  explicit markers (-25,50 / "debito"), and only as a last resort assumed
-  (flagged with sign_source == "assumed").
-* The Balance is the bank's balance when the statement has one. The old code
-  recomputed a running total starting at 0 (see result["balance_source"]).
-* Lines must START with a date (headers such as "Extrato de 01/01 a 31/01"
-  are no longer parsed as transactions); the value date is no longer left at
-  the start of the description; wrapped descriptions are joined; opening /
-  closing balance lines are recognised and used to reconcile the statement.
-* Amounts parse both 1.234,56 and 1,234.56 / 1 234,56.
-* Keywords match on word boundaries ('bp' no longer matches 'bpi', 'nos' no
-  longer matches 'mensagens'), accents are ignored, ties between duplicated
-  keywords are gone, and learn_category() ignores stop words.
-* Bank detection prefers the IBAN bank code and no longer uses substrings
-  such as 'nb'.
-* Table fallback: None headers, "mov" matching "movement" as a date, "1.234,56"
-  floats and tables after the first one are handled.
-* CSV / Excel exports neutralise formula injection (cells starting with = + - @).
-* logging instead of print (emoji prints can crash on Windows consoles).
-"""
 from __future__ import annotations
 
 import json
@@ -37,48 +9,9 @@ from typing import Any
 
 import pandas as pd
 import pdfplumber
+import data.constants as const
 
 logger = logging.getLogger(__name__)
-
-AMOUNT_TOLERANCE = 0.011   # cents
-MAX_PAGES = 50
-MAX_CONTINUATION_LINES = 2
-
-_DATE = r"\d{2}[/-]\d{2}[/-]\d{4}|\d{4}[/-]\d{2}[/-]\d{2}"
-_LINE_RE = re.compile(rf"^\s*({_DATE})(?:\s+({_DATE}))?\s*(.*)$")
-# 1.234,56 | 1,234.56 | 1 234,56 | 1234,56 | 25,50 (optional sign, optional trailing '-')
-_MONEY_RE = re.compile(r"(?<![\w.,/])[-+]?(?:\d{1,3}(?:[., ]\d{3})+|\d+)[.,]\d{2}-?(?!\w)")
-
-_OPENING_RE = re.compile(r"\b(saldo (anterior|inicial|de abertura)|opening balance|previous balance|balance brought forward)\b")
-_CLOSING_RE = re.compile(r"\b(saldo (final|atual|actual|de fecho)|closing balance|new balance)\b")
-_BALANCE_LINE_RE = re.compile(r"^(saldo|balance|total|transporte|a transportar)\b")
-_HEADER_RE = re.compile(r"\b(saldo|pagina|page|extrato|statement|iban|nib|conta|data|date|descri\w*|debito|credito|total|balance)\b")
-_DEBIT_RE = re.compile(r"\b(debito|debit|expense)\b")
-_CREDIT_RE = re.compile(r"\b(credito|credit|income)\b")
-
-# First four digits of a Portuguese IBAN after "PT50": the bank code. Verify against your own statements.
-_IBAN_BANK_CODES = {
-    "0035": "CGD", "0033": "BCP", "0007": "Novo Banco", "0018": "Santander",
-    "0010": "BPI", "0036": "Montepio", "0045": "Caixa Agricola",
-    "0193": "Banco CTT", "0023": "ActivoBank",
-}
-_BANK_KEYWORDS: list[tuple[str, re.Pattern]] = [
-    ("CGD", re.compile(r"\b(caixa geral de depositos|cgd|caixadirecta)\b")),
-    ("BCP", re.compile(r"\b(millennium bcp|millennium|bcp)\b")),
-    ("Novo Banco", re.compile(r"\bnovo banco\b")),
-    ("Santander", re.compile(r"\bsantander\b")),
-    ("BPI", re.compile(r"\b(banco bpi|bpi)\b")),
-    ("Caixa Agricola", re.compile(r"\b(caixa agricola|credito agricola)\b")),
-    ("Montepio", re.compile(r"\bmontepio\b")),
-    ("ActivoBank", re.compile(r"\bactivobank\b")),
-]
-
-_STOPWORDS = {
-    "compra", "pagamento", "transferencia", "levantamento", "multibanco", "mbway", "debito", "credito",
-    "para", "from", "payment", "purchase", "card", "cartao", "conta", "ref", "referencia",
-}
-_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-
 
 # ---------------------------------------------------------------------------
 # Module helpers
@@ -138,7 +71,7 @@ def _keyword_pattern(keyword: str) -> re.Pattern:
 
 def _safe_cell(value: Any) -> Any:
     """Prefix a quote so Excel/LibreOffice do not evaluate text as a formula."""
-    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+    if isinstance(value, str) and value.startswith(const._FORMULA_PREFIXES):
         return "'" + value
     return value
 
@@ -235,7 +168,7 @@ class BankStatementExtractor:
         parts: list[str] = []
         try:
             with self._open(source) as pdf:
-                for page in pdf.pages[:MAX_PAGES]:
+                for page in pdf.pages[:const.MAX_PAGES]:
                     text = page.extract_text()
                     if text:
                         parts.append(text)
@@ -249,7 +182,7 @@ class BankStatementExtractor:
         tables: list[pd.DataFrame] = []
         try:
             with self._open(source) as pdf:
-                for page in pdf.pages[:MAX_PAGES]:
+                for page in pdf.pages[:const.MAX_PAGES]:
                     for table in page.extract_tables():
                         if not table or len(table) < 2:
                             continue
@@ -270,11 +203,11 @@ class BankStatementExtractor:
     def identify_bank(self, text: str) -> str:
         """Identify the bank: IBAN bank code first, then names found in the page header."""
         match = re.search(r"\bPT\s?\d{2}\s?(\d{4})", text.upper())
-        if match and match.group(1) in _IBAN_BANK_CODES:
-            return _IBAN_BANK_CODES[match.group(1)]
+        if match and match.group(1) in const._IBAN_BANK_CODES:
+            return const._IBAN_BANK_CODES[match.group(1)]
 
         header = _norm(text[:1500])  # counterparties further down must not decide the bank
-        for bank, pattern in _BANK_KEYWORDS:
+        for bank, pattern in const._BANK_KEYWORDS:
             if pattern.search(header):
                 return bank
         return "Unknown"
@@ -319,7 +252,7 @@ class BankStatementExtractor:
         """
         self.categories.setdefault(correct_category, [])
         for word in re.findall(r"[a-z]{4,}", _norm(description)):
-            if word not in _STOPWORDS and word not in self.categories[correct_category]:
+            if word not in const._STOPWORDS and word not in self.categories[correct_category]:
                 self.categories[correct_category].append(word)
         self._patterns = None
         logger.info("Learned a correction for category '%s'.", correct_category)
@@ -332,7 +265,7 @@ class BankStatementExtractor:
         """Parse what follows the date(s): description, amount(s) and balance."""
         values: list[tuple[float, str]] = []
         spans: list[tuple[int, int]] = []
-        for m in _MONEY_RE.finditer(rest):
+        for m in const._MONEY_RE.finditer(rest):
             amount = _parse_amount(m.group(0))
             if amount is not None:
                 values.append((amount, m.group(0)))
@@ -352,7 +285,7 @@ class BankStatementExtractor:
         marker = -1 if first_token.startswith("-") or first_token.endswith("-") else (1 if first_token.startswith("+") else None)
         if marker is None:
             norm_rest = _norm(rest)
-            marker = -1 if _DEBIT_RE.search(norm_rest) else (1 if _CREDIT_RE.search(norm_rest) else None)
+            marker = -1 if const._DEBIT_RE.search(norm_rest) else (1 if const._CREDIT_RE.search(norm_rest) else None)
 
         nums = [v for v, _ in values]
         row: dict[str, Any] = {
@@ -378,8 +311,8 @@ class BankStatementExtractor:
         stripped = line.strip()
         return (
             0 < len(stripped) <= 60
-            and not _MONEY_RE.search(stripped)
-            and not _HEADER_RE.search(_norm(stripped))
+            and not const._MONEY_RE.search(stripped)
+            and not const._HEADER_RE.search(_norm(stripped))
             and not stripped.isdigit()
         )
 
@@ -391,20 +324,20 @@ class BankStatementExtractor:
 
         for line in text.split("\n"):
             norm_line = _norm(line)
-            money = _MONEY_RE.findall(line)
+            money = const._MONEY_RE.findall(line)
 
-            if money and _OPENING_RE.search(norm_line):
+            if money and const._OPENING_RE.search(norm_line):
                 opening = _parse_amount(money[-1])
                 last_was_row = False
                 continue
-            if money and _CLOSING_RE.search(norm_line):
+            if money and const._CLOSING_RE.search(norm_line):
                 closing = _parse_amount(money[-1])
                 last_was_row = False
                 continue
 
-            match = _LINE_RE.match(line)
+            match = const._LINE_RE.match(line)
             if not match:
-                if last_was_row and rows and rows[-1]["cont"] < MAX_CONTINUATION_LINES and self._is_continuation(line):
+                if last_was_row and rows and rows[-1]["cont"] < const.MAX_CONTINUATION_LINES and self._is_continuation(line):
                     rows[-1]["description"] += " " + line.strip()
                     rows[-1]["cont"] += 1
                 else:
@@ -416,7 +349,7 @@ class BankStatementExtractor:
             if date is None:
                 continue
             rest = match.group(3)
-            if _BALANCE_LINE_RE.match(_norm(rest)):
+            if const._BALANCE_LINE_RE.match(_norm(rest)):
                 continue
             row = self._parse_rest(rest)
             if row is None:
@@ -440,17 +373,17 @@ class BankStatementExtractor:
             if prev["balance"] is None or cur["balance"] is None:
                 continue
             diff = abs(cur["balance"] - prev["balance"])
-            if cur["amount"] is not None and abs(diff - cur["amount"]) <= AMOUNT_TOLERANCE:
+            if cur["amount"] is not None and abs(diff - cur["amount"]) <= const.AMOUNT_TOLERANCE:
                 asc += 1
-            if prev["amount"] is not None and abs(diff - prev["amount"]) <= AMOUNT_TOLERANCE:
+            if prev["amount"] is not None and abs(diff - prev["amount"]) <= const.AMOUNT_TOLERANCE:
                 desc += 1
         if opening is not None and rows:
             first, last = rows[0], rows[-1]
             if first["balance"] is not None and first["amount"] is not None \
-                    and abs(abs(first["balance"] - opening) - first["amount"]) <= AMOUNT_TOLERANCE:
+                    and abs(abs(first["balance"] - opening) - first["amount"]) <= const.AMOUNT_TOLERANCE:
                 asc += 1
             if last["balance"] is not None and last["amount"] is not None \
-                    and abs(abs(last["balance"] - opening) - last["amount"]) <= AMOUNT_TOLERANCE:
+                    and abs(abs(last["balance"] - opening) - last["amount"]) <= const.AMOUNT_TOLERANCE:
                 desc += 1
         if asc == desc == 0:
             return None
@@ -472,7 +405,7 @@ class BankStatementExtractor:
             if before is None:
                 continue
             delta = row["balance"] - before
-            if delta != 0 and abs(abs(delta) - row["amount"]) <= AMOUNT_TOLERANCE:
+            if delta != 0 and abs(abs(delta) - row["amount"]) <= const.AMOUNT_TOLERANCE:
                 row["sign"] = 1 if delta > 0 else -1
                 row["sign_source"] = "balance"
 
